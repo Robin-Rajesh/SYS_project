@@ -1,0 +1,65 @@
+═══════════════════════════════════════════════════════════════
+                     PRODUCT CATALOG
+                     FY 2024 Edition
+═══════════════════════════════════════════════════════════════
+
+CATEGORY: TECHNOLOGY
+─────────────────────
+ID        | Product Name               | Base Price | Rec. Selling Price | Status
+----------|----------------------------|-----------|-------------------|---------------
+PROD-101  | UltraBook Pro 15           | $850.00   | $1,275.00         | Active
+PROD-102  | UltraBook Air 13           | $650.00   | $975.00           | Active
+PROD-103  | SmartPhone X200            | $400.00   | $699.00           | Active
+PROD-104  | SmartPhone Lite S          | $180.00   | $299.00           | Active
+PROD-105  | TabMax 10.5                | $320.00   | $499.00           | Active
+PROD-106  | ClearView Monitor 27"      | $250.00   | $399.00           | Active
+PROD-107  | LaserJet Pro Printer       | $180.00   | $299.00           | Discontinue Q2 2025
+PROD-108  | Wireless Keyboard & Mouse  | $35.00    | $59.99            | Active
+PROD-109  | CloudSync Software Suite   | $120.00   | $199.00           | Active
+
+Profit Margin Target for Technology: 35% – 50%
+
+CATEGORY: FURNITURE
+─────────────────────
+ID        | Product Name               | Base Price | Rec. Selling Price | Status
+----------|----------------------------|-----------|-------------------|---------------
+PROD-201  | ErgoComfort Executive Chair | $280.00   | $499.00           | Active
+PROD-202  | StandUp Adjustable Desk    | $350.00   | $599.00           | Active
+PROD-203  | ClassicWood Bookcase       | $150.00   | $249.00           | Active
+PROD-204  | Conference Table 8-Seat    | $420.00   | $699.00           | Active
+PROD-205  | Steel Filing Cabinet 4-Dr  | $90.00    | $159.00           | Active
+PROD-206  | ModernLounge Sofa          | $500.00   | $849.00           | Discontinue Q3 2025
+PROD-207  | WallMount Shelving Unit    | $65.00    | $109.00           | Active
+
+Profit Margin Target for Furniture: 40% – 60%
+
+CATEGORY: OFFICE SUPPLIES
+─────────────────────────
+ID        | Product Name               | Base Price | Rec. Selling Price | Status
+----------|----------------------------|-----------|-------------------|---------------
+PROD-301  | Premium Copy Paper (Ream)  | $4.50     | $8.99             | Active
+PROD-302  | Heavy-Duty 3-Ring Binder   | $5.00     | $9.99             | Active
+PROD-303  | Executive Pen Set          | $12.00    | $24.99            | Active
+PROD-304  | Security Envelope Box      | $6.00     | $11.99            | Active
+PROD-305  | Label Maker Pro            | $25.00    | $44.99            | Active
+PROD-306  | Desktop Stapler Set        | $8.00     | $14.99            | Discontinue Q1 2025
+PROD-307  | Modular Storage Bins       | $15.00    | $29.99            | Active
+
+Profit Margin Target for Office Supplies: 50% – 100%
+
+═══════════════════════════════════════════════════════════════
+PRODUCTS FLAGGED FOR DISCONTINUATION
+═══════════════════════════════════════════════════════════════
+- PROD-107 (LaserJet Pro Printer)     → Discontinue by Q2 2025
+  Reason: Declining demand, high support costs.
+- PROD-206 (ModernLounge Sofa)        → Discontinue by Q3 2025
+  Reason: Low margin, bulky shipping costs eating into profit.
+- PROD-306 (Desktop Stapler Set)      → Discontinue by Q1 2025
+  Reason: Commodity product, intense price competition.
+
+Recommendation: Transition customers to alternative products and
+offer a one-time 10% loyalty discount on replacement orders.
+
+═══════════════════════════════════════════════════════════════
+                         END OF DOCUMENT
+═══════════════════════════════════════════════════════════════

@@ -1,0 +1,54 @@
+═══════════════════════════════════════════════════════════════
+                    SALES POLICY DOCUMENT
+                    FY 2021 – FY 2024
+═══════════════════════════════════════════════════════════════
+
+1. QUARTERLY SALES TARGETS BY REGION (in USD)
+───────────────────────────────────────────────
+Region  |    Q1       |    Q2       |    Q3       |    Q4
+--------|-------------|-------------|-------------|------------
+North   | 2,500,000   | 3,000,000   | 3,200,000   | 4,000,000
+South   | 2,000,000   | 2,500,000   | 2,800,000   | 3,500,000
+East    | 1,800,000   | 2,200,000   | 2,500,000   | 3,200,000
+West    | 2,200,000   | 2,700,000   | 3,000,000   | 3,800,000
+
+2. DISCOUNT APPLICATION RULES
+───────────────────────────────
+- Discounts may only be applied via the approved Discount Tier system.
+- Every discount above Bronze (5%) requires documented approval.
+- No discount may exceed the Platinum tier (30%).
+- Stacking of discount tiers on a single order is strictly prohibited.
+- See the Discount Approval Matrix document for tier-specific rules.
+
+3. RETURN POLICY
+─────────────────
+- Customers may request a return within 30 days of the Ship_Date.
+- Returned items must be in original packaging and undamaged.
+- Technology items (laptops, phones, tablets) have a 15-day return window.
+- Returns are processed within 5 business days after receiving the item.
+- Refunds are credited to the original payment method.
+- Bulk orders (Quantity > 10) require regional manager approval for returns.
+- Fraudulent returns are flagged and escalated to the compliance team.
+
+4. SALES REP COMMISSION STRUCTURE
+───────────────────────────────────
+- Base commission: 3% of Sales_Amount for all confirmed (non-returned) orders.
+- Bonus tiers:
+    * Monthly sales > $50,000  → additional 1% bonus
+    * Monthly sales > $100,000 → additional 2% bonus (total 5%)
+    * Monthly sales > $200,000 → additional 3% bonus (total 6%)
+- Commission on returned orders is clawed back in the following pay period.
+- Platinum-tier discount orders receive 50% of the normal commission rate.
+
+5. PERFORMANCE REVIEW TRIGGERS
+────────────────────────────────
+A performance review is automatically initiated if:
+- A sales rep misses their quarterly target by more than 20%.
+- Return rate for a rep exceeds 8% over a rolling 90-day window.
+- Average discount offered by a rep exceeds 15% in any quarter.
+- Three or more customer complaints are lodged in a single month.
+- Compliance violations are reported by the internal audit team.
+
+═══════════════════════════════════════════════════════════════
+                         END OF DOCUMENT
+═══════════════════════════════════════════════════════════════

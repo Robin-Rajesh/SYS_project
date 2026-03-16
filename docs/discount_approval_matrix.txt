@@ -1,0 +1,55 @@
+═══════════════════════════════════════════════════════════════
+              DISCOUNT APPROVAL MATRIX
+              Effective FY 2021 – FY 2024
+═══════════════════════════════════════════════════════════════
+
+1. DISCOUNT TIER DEFINITIONS & APPROVAL AUTHORITY
+──────────────────────────────────────────────────
+
+Tier       | Discount % | Approval Authority        | Max Units
+-----------|------------|---------------------------|----------
+None       |  0%        | No approval needed        | Unlimited
+Bronze     |  5%        | Any Sales Rep             | Unlimited
+Silver     | 10%        | Team Lead approval        | 50 units
+Gold       | 20%        | Regional Manager approval | 25 units
+Platinum   | 30%        | VP of Sales approval      | 10 units
+
+2. SEASONAL / REGIONAL RESTRICTIONS
+─────────────────────────────────────
+
+Q3-SPECIFIC RULE (July – September):
+  • The maximum allowed AVERAGE discount across all orders in the
+    South region must not exceed 10%.
+  • Individual Gold and Platinum orders are still permitted, but the
+    aggregate average must remain at or below 10%.
+  • Violations trigger an automatic audit of the responsible sales reps.
+
+Q4-SPECIFIC RULE (October – December):
+  • Platinum-tier discounts (30%) are FROZEN in the East region.
+  • No new Platinum discount orders may be created in the East region
+    during Q4 under any circumstances.
+  • Existing Platinum orders placed before Q4 are honored.
+  • This restriction is in place to protect Q4 margins for the
+    fiscal year close.
+
+3. VIOLATION ESCALATION PROCEDURE
+───────────────────────────────────
+Step 1: Automated alert is sent to the sales rep and their team lead.
+Step 2: Team lead must respond within 24 hours with justification.
+Step 3: If unjustified, the regional manager reviews the case within 48 hours.
+Step 4: Confirmed violations are logged in the compliance database.
+Step 5: Repeat violations (3+ in a quarter) trigger a formal PIP
+         (Performance Improvement Plan).
+Step 6: Egregious violations (willful override) result in immediate
+         suspension of discount-granting privileges.
+
+4. EXCEPTIONS
+───────────────
+- Government and educational institution orders may receive up to
+  Gold-tier discounts without additional approval.
+- Orders exceeding $500,000 in value may request a custom discount
+  that must be approved by the Chief Revenue Officer (CRO).
+
+═══════════════════════════════════════════════════════════════
+                         END OF DOCUMENT
+═══════════════════════════════════════════════════════════════
