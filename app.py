@@ -647,20 +647,6 @@ with tab_policy:
                     st.session_state.policy_messages.append({"role": "assistant", "content": f"Policy search failed: {e}"})
 
     st.markdown("---")
-    st.subheader("📚 Company Knowledge Base")
-    st.markdown("Browse the source documents that power the AI's logic.")
-    
-    docs_list = [f for f in os.listdir(config.DOCS_DIR) if f.endswith(".txt")]
-    if docs_list:
-        selected_doc = st.selectbox("View Document Content:", docs_list)
-        if selected_doc:
-            with open(config.DOCS_DIR / selected_doc, "r", encoding="utf-8") as f:
-                content = f.read()
-            st.text_area(f"Viewing: {selected_doc}", content, height=300, disabled=True)
-    else:
-        st.info("No documents found in the `/docs/` folder yet.")
-
-    st.markdown("---")
     st.subheader("📄 Upload & Ingest New Policy")
     uploaded_file = st.file_uploader("Upload a new company policy text file (.txt)", type=["txt"])
     if st.button("Upload Document", type="secondary", use_container_width=True):
