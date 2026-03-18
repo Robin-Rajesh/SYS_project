@@ -13,6 +13,7 @@ to build a tool-calling agent with:
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.prebuilt import create_react_agent
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+import json
 
 # Import project config and all three tools
 import config
@@ -32,12 +33,36 @@ def get_system_prompt() -> str:
     from tools.sql_tool import get_schema
     current_schema = get_schema()
     
+    # Load Star Schema relationships
+    metadata_path = config.DATA_DIR / "schema_metadata.json"
+    relationships_str = "No cross-database relationships defined yet."
+    if metadata_path.exists():
+        try:
+            with open(metadata_path, "r") as f:
+                metadata = json.load(f)
+            if metadata.get("relationships"):
+                rel_lines = []
+                for rel in metadata["relationships"]:
+                    rel_lines.append(f"- {rel['source_table']} ({rel['source_db']}).{rel['source_column']} -> {rel['target_table']} ({rel['target_db']}).{rel['target_column']} [{rel['type']}]")
+                relationships_str = "\n".join(rel_lines)
+        except:
+            pass
+
     return f"""\
 You are an expert Data Analyst AI assistant with access to three tools:
 
 1. sql_query_tool: Query the connected SQL database using SELECT statements only.
-   Never guess column names. Here is the exact schema of the database you are querying:
    
+   MULTI-DATABASE CAPABILITY:
+   - All .db files in the /data folder are automatically ATTACHED.
+   - You can cross-join them using their filename (without .db) as the schema prefix.
+   - Example: To join 'sales.db' with 'users.db', use: 
+     SELECT * FROM sales JOIN users.users ON sales.Customer_ID = users.user_id;
+
+   ENTERPRISE STAR SCHEMA RELATIONSHIPS:
+{relationships_str}
+
+   ACTIVE DATABASE SCHEMA:
 {current_schema}
 
 2. policy_search_tool: Search internal policy documents, discount

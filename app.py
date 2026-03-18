@@ -8,8 +8,11 @@ Features:
 """
 
 import os
+import subprocess
 import streamlit as st
 import pandas as pd
+import json
+import graphviz
 from agent import stream_agent, clear_memory
 from tools.sql_tool import set_database_connection, get_engine
 import config
@@ -96,15 +99,92 @@ with st.sidebar:
     st.markdown("---")
     st.subheader("📅 Automation Settings")
     
-    # Scheduling UI
-    with st.expander("Report Delivery Schedule", expanded=False):
+    TASK_NAME = "AI_Executive_Sales_Report"
+    SCRIPT_PATH = str(config.BASE_DIR / "scripts" / "cron_report_sender.py")
+    PYTHON_PATH = str(config.BASE_DIR / "venv" / "Scripts" / "python.exe")
+
+    def get_task_status():
+        """Check if the Windows Scheduled Task exists and return its next run time."""
+        try:
+            result = subprocess.run(
+                ["schtasks", "/query", "/tn", TASK_NAME, "/fo", "LIST"],
+                capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0:
+                for line in result.stdout.splitlines():
+                    if "Next Run Time" in line:
+                        return f"✅ Active — {line.split(':', 1)[1].strip()}"
+                return "✅ Active"
+            return "🔴 Not Scheduled"
+        except Exception:
+            return "❓ Status Unknown"
+    
+    with st.expander("📧 Report Delivery Schedule", expanded=True):
+        st.caption(f"**Task Status:** {get_task_status()}")
         scheduled_time = st.time_input("Daily Delivery Time", value=pd.to_datetime("09:00").time())
+        recipient_email = st.text_input("📨 Recipient Email", value=config.RECIPIENT_EMAIL or "", placeholder="e.g. manager@company.com")
         is_enabled = st.checkbox("Enable Daily Email Report", value=True)
-        
-        if st.button("Update Schedule", use_container_width=True):
-            # For now, we simulate the update in the UI to confirm the layout works
-            st.success(f"Schedule updated to {scheduled_time.strftime('%I:%M %p')}!")
-            st.toast("Settings saved successfully!", icon="✅")
+
+        col_sched1, col_sched2 = st.columns(2)
+        with col_sched1:
+            if st.button("🔄 Update Schedule", use_container_width=True, type="primary"):
+                time_str = scheduled_time.strftime("%H:%M")
+                cmd = [
+                    "schtasks", "/create",
+                    "/tn", TASK_NAME,
+                    "/tr", f'"{PYTHON_PATH}" "{SCRIPT_PATH}"',
+                    "/sc", "DAILY",
+                    "/st", time_str,
+                    "/f"  # Force-overwrite if exists
+                ]
+                if not is_enabled:
+                    # Delete the task instead
+                    cmd = ["schtasks", "/delete", "/tn", TASK_NAME, "/f"]
+                
+                try:
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+                    if result.returncode == 0:
+                        st.success(f"Schedule set to {scheduled_time.strftime('%I:%M %p')} daily!" if is_enabled else "Schedule disabled.")
+                        st.toast("✅ Windows Task Scheduler updated!", icon="🗓️")
+                    else:
+                        st.error(f"Scheduler error: {result.stderr.strip() or result.stdout.strip()}")
+                except Exception as ex:
+                    st.error(f"Failed to update schedule: {ex}")
+
+        with col_sched2:
+            if st.button("⚡ Send Report Now", use_container_width=True):
+                with st.spinner("🤖 Generating & sending report... (may take a few minutes)"):
+                    import smtplib
+                    from email.message import EmailMessage
+                    import importlib.util
+                    try:
+                        # Load the cron sender module from its absolute path 
+                        _spec = importlib.util.spec_from_file_location(
+                            "cron_report_sender",
+                            str(config.BASE_DIR / "scripts" / "cron_report_sender.py")
+                        )
+                        _cron_mod = importlib.util.module_from_spec(_spec)
+                        _spec.loader.exec_module(_cron_mod)
+                        html_content = _cron_mod.generate_report()
+                        
+                        # Use recipient from the UI field
+                        to_addr = recipient_email or config.RECIPIENT_EMAIL
+                        msg = EmailMessage()
+                        msg["Subject"] = "📊 AI Executive Sales Report"
+                        msg["From"] = config.SENDER_EMAIL
+                        msg["To"] = to_addr
+                        msg.set_content("Please find the attached AI-generated Sales Report. Open in Chrome/Edge to view interactive charts.")
+                        msg.add_attachment(html_content.encode("utf-8"), maintype="text", subtype="html", filename="Executive_Sales_Report.html")
+                        
+                        server = smtplib.SMTP(config.SMTP_SERVER, config.SMTP_PORT)
+                        server.ehlo()
+                        server.starttls()
+                        server.login(config.SENDER_EMAIL, config.SENDER_PASSWORD)
+                        server.send_message(msg)
+                        server.quit()
+                        st.success(f"✅ Report sent to {to_addr}!")
+                    except Exception as e:
+                        st.error(f"Failed: {e}")
 
     st.markdown("---")
     st.subheader("💡 Example AI Prompts")
@@ -309,6 +389,105 @@ with tab_data:
                         st.error(f"Scan failed: {scan_err}")
         else:
             st.warning("No tables found in this database.")
+        
+        # ═══════════════════════════════════════════════════════════════
+        # 4.1 STAR SCHEMA & RELATIONSHIP MAPPER
+        # ═══════════════════════════════════════════════════════════════
+        st.markdown("---")
+        st.subheader("🕸️ Star Schema & Relationship Mapper")
+        st.markdown("Define Primary/Foreign Key connections across multiple databases to build your enterprise star schema.")
+        
+        # Load existing metadata
+        metadata_path = config.DATA_DIR / "schema_metadata.json"
+        if metadata_path.exists():
+            with open(metadata_path, "r") as f:
+                metadata = json.load(f)
+        else:
+            metadata = {"relationships": []}
+
+        with st.expander("🛠️ Define New Connection", expanded=False):
+            db_files = [f for f in os.listdir(config.DATA_DIR) if f.endswith((".db", ".sqlite"))]
+            
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown("**Source (Foreign Key)**")
+                src_db = st.selectbox("Source Database", db_files, key="src_db")
+                # Get tables for src_db
+                src_engine = st.connection("sql", type="sql", url=f"sqlite:///{config.DATA_DIR / src_db}")
+                src_tables = inspect(src_engine.engine).get_table_names()
+                src_table = st.selectbox("Source Table", src_tables, key="src_table")
+                src_cols = [c["name"] for c in inspect(src_engine.engine).get_columns(src_table)]
+                src_col = st.selectbox("Source Column (FK)", src_cols, key="src_col")
+            
+            with c2:
+                st.markdown("**Target (Primary Key)**")
+                tgt_db = st.selectbox("Target Database", db_files, key="tgt_db")
+                tgt_engine = st.connection("sql", type="sql", url=f"sqlite:///{config.DATA_DIR / tgt_db}")
+                tgt_tables = inspect(tgt_engine.engine).get_table_names()
+                tgt_table = st.selectbox("Target Table", tgt_tables, key="tgt_table")
+                tgt_cols = [c["name"] for c in inspect(tgt_engine.engine).get_columns(tgt_table)]
+                tgt_col = st.selectbox("Target Column (PK)", tgt_cols, key="tgt_col")
+            
+            rel_type = st.selectbox("Relationship Type", ["Many-to-One", "One-to-One", "Many-to-Many"])
+            
+            if st.button("🔗 Add Relationship to Schema"):
+                new_rel = {
+                    "source_db": src_db,
+                    "source_table": src_table,
+                    "source_column": src_col,
+                    "target_db": tgt_db,
+                    "target_table": tgt_table,
+                    "target_column": tgt_col,
+                    "type": rel_type
+                }
+                metadata["relationships"].append(new_rel)
+                with open(metadata_path, "w") as f:
+                    json.dump(metadata, f, indent=4)
+                st.success("Relationship added! Star Schema updated.")
+                st.rerun()
+
+        # Render Star Schema with Graphviz
+        if metadata["relationships"]:
+            st.markdown("#### Live Enterprise Star Schema")
+            dot = graphviz.Digraph(comment='Enterprise Star Schema')
+            dot.attr(rankdir='LR', size='8,5')
+            dot.attr('node', shape='none')
+
+            # Render tables as HTML labels
+            rendered_tables = set()
+            for rel in metadata["relationships"]:
+                for prefix in ["source", "target"]:
+                    db = rel[f"{prefix}_db"]
+                    table = rel[f"{prefix}_table"]
+                    if (db, table) not in rendered_tables:
+                        # Get columns for this table
+                        temp_engine = st.connection("sql", type="sql", url=f"sqlite:///{config.DATA_DIR / db}")
+                        cols = [c["name"] for c in inspect(temp_engine.engine).get_columns(table)]
+                        
+                        label = f'<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0"><TR><TD COLSPAN="2" BGCOLOR="lightblue"><B>{table}</B> ({db})</TD></TR>'
+                        for col in cols:
+                            label += f'<TR><TD ALIGN="LEFT">{col}</TD></TR>'
+                        label += '</TABLE>>'
+                        
+                        dot.node(f"{db}_{table}", label=label)
+                        rendered_tables.add((db, table))
+
+            # Render edges
+            for rel in metadata["relationships"]:
+                label = rel["type"]
+                dot.edge(
+                    f"{rel['source_db']}_{rel['source_table']}", 
+                    f"{rel['target_db']}_{rel['target_table']}", 
+                    label=label
+                )
+
+            st.graphviz_chart(dot)
+            
+            if st.button("🗑️ Clear All Relationships", type="secondary"):
+                if metadata_path.exists():
+                    os.remove(metadata_path)
+                st.rerun()
+
     except Exception as e:
         st.error(f"Could not load data preview. Ensure the database connection is valid.\nError: {e}")
 

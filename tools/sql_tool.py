@@ -10,6 +10,7 @@ LangChain Tool that:
 
 import re
 import json
+import os
 import pandas as pd
 from sqlalchemy import create_engine, inspect, text
 from langchain_core.tools import tool
@@ -152,6 +153,24 @@ def sql_query_tool(query: str) -> str:
         try:
             # Execute the SQL and load results into a DataFrame
             with get_engine().connect() as conn:
+                # --- AUTO-ATTACH OTHER DATABASES ---
+                # Search for all other .db files in the data/ folder and ATTACH them
+                # so the agent can perform cross-database JOINs.
+                db_files = [f for f in os.listdir(config.DATA_DIR) if f.endswith((".db", ".sqlite"))]
+                active_db_name = os.path.basename(_current_db_uri.split("///")[-1])
+                
+                for db_file in db_files:
+                    if db_file != active_db_name:
+                        alias = os.path.splitext(db_file)[0]
+                        # Sanitize alias (letters and underscores only)
+                        alias = re.sub(r'[^a-zA-Z0-9_]', '_', alias)
+                        attach_path = str(config.DATA_DIR / db_file).replace("\\", "/")
+                        try:
+                            conn.execute(text(f"ATTACH DATABASE '{attach_path}' AS {alias}"))
+                        except Exception as attach_err:
+                            # If it's already attached or fails, we skip it
+                            pass
+
                 df = pd.read_sql(text(current_sql), conn)
 
             # --- No-hallucination guardrail ---
