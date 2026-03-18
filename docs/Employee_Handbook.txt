@@ -1,0 +1,23 @@
+# ═══════════════════════════════════════════════════════════════
+# EMPLOYEE HANDBOOK: MISSION & BENEFITS
+# ═══════════════════════════════════════════════════════════════
+
+1. MISSION STATEMENT
+- "To empower global commerce through data-driven precision and sustainable innovation."
+
+2. REMOTE WORK POLICY
+- Employees are eligible for the 'Flexible Workspace' program (3 days remote, 2 days in-office).
+- A one-time $500 'Home Office Stipend' is provided to all new hires.
+
+3. SALES COMMISSION STRUCTURE
+- Base Commission: 5% of Net Sales.
+- Accelerator Level 1: If 110% of quota is met, commission increases to 7.5% for all sales.
+- President's Club: Top 5 performers annually receive an all-expenses-paid trip to Maui.
+
+4. HEALTH & WELLNESS
+- Premium health insurance coverage begins on Day 1 of employment.
+- Annual $300 "Wellness Credit" for gym memberships or mental health apps.
+
+5. PROFESSIONAL DEVELOPMENT
+- The company reimburses up to $2,500/year for job-related certifications or courses.
+- Internal "Data Fellowship" program allows non-technical staff to learn SQL and Python.

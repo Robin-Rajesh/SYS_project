@@ -39,9 +39,18 @@ DB_PATH = DATA_DIR / "sales.db"                 # SQLite database file
 # 3. MODEL & EMBEDDING SETTINGS
 # ═══════════════════════════════════════════════════════════════
 
-MODEL_NAME = "gemini-2.5-flash"                 # Google Gemini model ID
+MODEL_NAME = "gemini-2.5-flash"                  # Google Gemini model ID (Use Pro for massive report reliability)
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"           # HuggingFace sentence-transformers model (local, free)
 MAX_RETRIES = 3                                 # Max SQL self-correction attempts
+
+# ═══════════════════════════════════════════════════════════════
+# 3.1 EMAIL SETTINGS
+# ═══════════════════════════════════════════════════════════════
+SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587") or "587")
+SENDER_EMAIL = os.getenv("SENDER_EMAIL", "")
+SENDER_PASSWORD = os.getenv("SENDER_PASSWORD", "")
+RECIPIENT_EMAIL = os.getenv("RECIPIENT_EMAIL", "")
 
 # ═══════════════════════════════════════════════════════════════
 # 4. AUTO-CREATE DIRECTORIES

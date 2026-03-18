@@ -1,0 +1,23 @@
+# ═══════════════════════════════════════════════════════════════
+# SALES COMPLIANCE & DISCOUNT RULES (Q1 2026)
+# ═══════════════════════════════════════════════════════════════
+
+1. STANDARD DISCOUNT LIMITS
+- All sales associates are authorized to provide a standard discount of up to 15% without prior approval.
+- High-volume corporate client status grants an automatic 10% discount across all categories.
+
+2. REGIONAL CAPS
+- West Region: Maximum discount is strictly capped at 25% due to high shipping overhead.
+- South Region: Promotional "Summer Blitz" allows for up to 30% discounts on Furniture only.
+- Central/East Regions: Follow standard 15% rules.
+
+3. APPROVAL HIERARCHY
+- Discounts between 16% and 30%: Requires written approval from the Regional Sales Manager.
+- Discounts exceeding 30%: Requires sign-off from the VP of Global Sales.
+
+4. BUNDLING RULES
+- Customers purchasing 'Technology' and 'Office Supplies' together receive an additional 5% 'Workspace Bundle' discount.
+- Bundling discounts cannot be combined with seasonal promotional codes exceeding 20%.
+
+5. AUDIT TRIGGER
+- Any transaction where the discount exceeds 40% will trigger an automatic internal compliance audit.

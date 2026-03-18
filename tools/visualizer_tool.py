@@ -107,8 +107,8 @@ def visualization_tool(input_json: str) -> str:
         png_path  = config.OUTPUTS_DIR / f"chart_{timestamp}.png"
         html_path = config.OUTPUTS_DIR / f"chart_{timestamp}.html"
 
-        # --- Save interactive HTML (Skip PNG as kaleido hangs on Windows) ---
-        fig.write_html(str(html_path))
+        # --- Save interactive HTML (using CDN for Plotly engine to keep file size tiny) ---
+        fig.write_html(str(html_path), include_plotlyjs='cdn')
 
         return (
             f"Chart saved successfully:\n"

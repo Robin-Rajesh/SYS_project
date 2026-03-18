@@ -1,0 +1,35 @@
+# ═══════════════════════════════════════════════════════════════
+# PRODUCT CATALOG: PREMIUM OFFICE SOLUTIONS
+# ═══════════════════════════════════════════════════════════════
+
+CATEGORY: TECHNOLOGY
+--------------------
+PRODUCT: Quantum Pro Monitor
+- Specs: 34-inch Ultrawide, 4K, 144Hz.
+- Target: Creative professionals, Software Engineers.
+- USP: Built-in color calibration and KVM switch for multi-pc setups.
+- Warranty: 3-year "Zero dead pixel" guarantee.
+
+PRODUCT: SecureConnect Docking Station
+- Specs: 12-in-1 USB-C, Dual 4K HDMI, Thunderbolt 4.
+- Target: Enterprise workstations, Remote employees.
+- USP: Integrated hardware-level encryption for data peripherals.
+
+CATEGORY: FURNITURE
+-------------------
+PRODUCT: ErgoThrive Executive Chair
+- Features: Mesh back, adjustable lumbar support, 4D armrests.
+- Target: Corporate HQ, Premium Home Offices.
+- USP: Rated for 24/7 use with a 10-year structural warranty.
+
+PRODUCT: Apex Standing Desk (v4)
+- Features: Dual-motor, 4 programmable heights, cable management tray.
+- Target: Health-conscious employees, modern startups.
+- USP: Anti-collision sensor and industrial-grade steel frame.
+
+CATEGORY: OFFICE SUPPLIES
+--------------------------
+PRODUCT: EcoWrite Recycled Notepad
+- Features: 100% post-consumer waste paper, soy-based inks.
+- Target: Sustainability-focused organizations.
+- USP: FSC Certified and Carbon Neutral production.

@@ -66,6 +66,8 @@ llm = ChatGoogleGenerativeAI(
     model=config.MODEL_NAME,
     google_api_key=config.GOOGLE_API_KEY,
     temperature=0,
+    timeout=600.0,
+    max_retries=5,
 )
 
 # ═══════════════════════════════════════════════════════════════
@@ -95,7 +97,7 @@ agent = create_react_agent(
 # exchanges (pairs of Human + AI messages) before each call.
 
 _chat_history: list = []
-_MEMORY_WINDOW = 5   # keep last 5 user/assistant pairs
+_MEMORY_WINDOW = 10   # keep last 10 user/assistant pairs
 
 
 def _trim_history():
@@ -140,15 +142,31 @@ def run_agent(user_input: str) -> str:
 
         # Extract the final AI response
         response_messages = result.get("messages", [])
-        # The last message from the agent is the final answer
         ai_response = ""
+        
+        # Iterate backwards to find the first AIMessage with content
+        # Sometimes the model returns a tool call message and then a final message
         for msg in reversed(response_messages):
-            if isinstance(msg, AIMessage) and msg.content:
-                ai_response = _extract_text(msg.content)
-                break
+            if hasattr(msg, "content") and msg.content:
+                text = _extract_text(msg.content).strip()
+                if text and text != "None":
+                    ai_response = text
+                    break
 
         if not ai_response:
-            ai_response = "No response generated."
+            # Fallback: Check if any message contains content
+            all_content = [
+                _extract_text(m.content) 
+                for m in response_messages 
+                if hasattr(m, "content") and m.content
+            ]
+            if all_content:
+                # Find the longest content block (likely the HTML report)
+                ai_response = max(all_content, key=len)
+            else:
+                with open("outputs/debug_agent.txt", "w", encoding="utf-8") as f:
+                    f.write(f"Result dump:\n{result}\n\n")
+                ai_response = "No response generated."
 
         # Store the AI response in history
         _chat_history.append(AIMessage(content=ai_response))

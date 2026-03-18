@@ -1,0 +1,13 @@
+{
+    "relationships": [
+        {
+            "source_db": "sales.db",
+            "source_table": "sales",
+            "source_column": "Customer_ID",
+            "target_db": "users.db",
+            "target_table": "users",
+            "target_column": "user_id",
+            "type": "Many-to-One"
+        }
+    ]
+}
