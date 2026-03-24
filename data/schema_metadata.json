@@ -3,29 +3,11 @@
         {
             "source_db": "sales.db",
             "source_table": "sales",
-            "source_column": "Customer_ID",
-            "target_db": "users.db",
-            "target_table": "users",
-            "target_column": "user_id",
+            "source_column": "Category",
+            "target_db": "master_data.db",
+            "target_table": "customers",
+            "target_column": "customer_id",
             "type": "Many-to-One"
-        },
-        {
-            "source_db": "sales.db",
-            "source_table": "sales",
-            "source_column": "Order_ID",
-            "target_db": "sales.db",
-            "target_table": "sales",
-            "target_column": "Order_ID",
-            "type": "Many-to-Many"
-        },
-        {
-            "source_db": "sales.db",
-            "source_table": "sales",
-            "source_column": "Order_ID",
-            "target_db": "users.db",
-            "target_table": "employees",
-            "target_column": "emp_id",
-            "type": "Many-to-Many"
         }
     ]
 }

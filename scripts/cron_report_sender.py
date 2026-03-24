@@ -93,5 +93,16 @@ def send_email(html_content: str):
         print(f"Failed to send email. Error: {e}")
 
 if __name__ == "__main__":
+    # Check if recipient email is passed as a command line argument (from schtasks)
+    target_email = sys.argv[1] if len(sys.argv) > 1 else config.RECIPIENT_EMAIL
+    
+    if not target_email:
+        print("ERROR: No recipient email provided. Please set via command line or config.")
+        sys.exit(1)
+
+    print(f"Starting scheduled task for: {target_email}")
     report_html = generate_report()
+    
+    # Temporarily override config.RECIPIENT_EMAIL for this execution
+    config.RECIPIENT_EMAIL = target_email
     send_email(report_html)

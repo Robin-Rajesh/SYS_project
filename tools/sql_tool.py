@@ -47,29 +47,57 @@ def get_schema() -> str:
     """
     Read (or return cached) schema of the database using SQLAlchemy inspect.
     Injects table names and columns into correction prompts.
+    ALSO introspects all other .db files in data/ to support cross-database queries.
     """
     global _schema_cache
     if _schema_cache:
         return _schema_cache
         
+    lines = []
+    
+    # 1. Introspect the PRIMARY database
     engine = get_engine()
     inspector = inspect(engine)
-    
-    # Introspect all available tables (not just 'sales')
     tables = inspector.get_table_names()
-    if not tables:
-        return "No tables found in the database."
+    
+    if tables:
+        lines.append("--- PRIMARY DATABASE TABLES ---")
+        for table_name in tables[:5]:
+            columns = inspector.get_columns(table_name)
+            lines.append(f"Table: {table_name}")
+            lines.append("Columns:")
+            for col in columns:
+                lines.append(f"  - {col['name']}  ({col['type']})")
+            lines.append("")
+
+    # 2. Introspect ALL OTHER databases in data/
+    db_files = [f for f in os.listdir(config.DATA_DIR) if f.endswith((".db", ".sqlite"))]
+    active_db_name = os.path.basename(_current_db_uri.split("///")[-1])
+    
+    for db_file in db_files:
+        if db_file == active_db_name:
+            continue
+            
+        alias = os.path.splitext(db_file)[0]
+        alias = re.sub(r'[^a-zA-Z0-9_]', '_', alias)
+        db_path = f"sqlite:///{config.DATA_DIR / db_file}"
         
-    lines = []
-    # If the user uploads a custom DB, we extract schema for up to 5 tables
-    # to avoid blowing up the prompt context window.
-    for table_name in tables[:5]:
-        columns = inspector.get_columns(table_name)
-        lines.append(f"Table: {table_name}")
-        lines.append("Columns:")
-        for col in columns:
-            lines.append(f"  - {col['name']}  ({col['type']})")
-        lines.append("")
+        try:
+            other_engine = create_engine(db_path)
+            other_inspector = inspect(other_engine)
+            other_tables = other_inspector.get_table_names()
+            
+            if other_tables:
+                lines.append(f"--- ATTACHED DATABASE: {alias} ---")
+                for table_name in other_tables[:3]: # Limit to avoid context bloat
+                    columns = other_inspector.get_columns(table_name)
+                    lines.append(f"Table: {alias}.{table_name}")
+                    lines.append("Columns:")
+                    for col in columns:
+                        lines.append(f"  - {col['name']}  ({col['type']})")
+                    lines.append("")
+        except Exception:
+            continue
         
     _schema_cache = "\n".join(lines)
     return _schema_cache
