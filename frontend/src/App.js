@@ -1,4 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { Routes, Route, Navigate, useNavigate } from "react-router-dom";
+import LandingPage from "./LandingPage";
+import LoginPage from "./LoginPage";
 import {
   MessageSquare, Database, BarChart2, BookOpen, Settings,
   Send, Trash2, RefreshCw, Download, Mail, Upload,
@@ -1521,21 +1524,326 @@ function SchemaMapperTab() {
   );
 }
 
-// ─── APP SHELL ────────────────────────────────────────────────
+// ─── HYBRID SEARCH TAB ────────────────────────────────────────
+function HybridSearchTab() {
+  useTheme();
+  const [query, setQuery] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState("");
+  const [showSql, setShowSql] = useState(false);
+
+  const EXAMPLES = [
+    "What are the top 5 customers by revenue?",
+    "Show discount policy for orders over $1000",
+    "Which products have the highest profit margin?",
+    "What is the refund policy for premium customers?",
+  ];
+
+  const search = async (q = query) => {
+    if (!q.trim()) return;
+    setLoading(true); setError(""); setResult(null); setShowSql(false);
+    try {
+      const res = await fetch(`${API}/api/hybrid-search`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: q }),
+      });
+      if (!res.ok) throw new Error(`Server error: ${res.status}`);
+      const data = await res.json();
+      setResult(data);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const sqlOk   = result?.sql?.success && result?.sql?.rows?.length > 0;
+  const ragOk   = result?.rag?.success && result?.rag?.chunks?.length > 0;
+
+  return (
+    <div style={{ padding: 28, display: "flex", flexDirection: "column", gap: 20, height: "100%", overflowY: "auto" }}>
+      {/* Header */}
+      <div>
+        <h2 style={{ fontSize: 22, fontWeight: 800, color: C.text, letterSpacing: "-0.03em", marginBottom: 4 }}>
+          ⚡ Hybrid Search
+        </h2>
+        <p style={{ fontSize: 13, color: C.muted }}>
+          Simultaneously queries the SQL database <em>and</em> policy documents — results appear side-by-side.
+        </p>
+      </div>
+
+      {/* Search Bar */}
+      <Card style={{ padding: 16 }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          <input
+            value={query} onChange={e => setQuery(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && search()}
+            placeholder="Ask anything — e.g. 'top customers by profit'"
+            style={{
+              flex: 1, padding: "11px 16px", borderRadius: 10,
+              background: C.surface, border: `1px solid ${C.border}`,
+              color: C.text, fontSize: 14, outline: "none",
+              fontFamily: "'Plus Jakarta Sans',sans-serif",
+              transition: "border-color .15s",
+            }}
+            onFocus={e => { e.currentTarget.style.borderColor = C.accent; }}
+            onBlur={e => { e.currentTarget.style.borderColor = C.border; }}
+          />
+          <Btn onClick={() => search()} icon={Activity} disabled={loading}>
+            {loading ? "Searching…" : "Search"}
+          </Btn>
+        </div>
+        {/* Example chips */}
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
+          {EXAMPLES.map((ex, i) => (
+            <button key={i} onClick={() => { setQuery(ex); search(ex); }}
+              style={{
+                padding: "4px 12px", borderRadius: 20,
+                background: C.surface, border: `1px solid ${C.border}`,
+                color: C.textSoft, fontSize: 11.5, cursor: "pointer",
+                fontFamily: "'Plus Jakarta Sans',sans-serif", transition: "all .15s",
+              }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = C.accent; e.currentTarget.style.color = C.accent; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.color = C.textSoft; }}
+            >
+              {ex}
+            </button>
+          ))}
+        </div>
+      </Card>
+
+      {/* Loading */}
+      {loading && (
+        <div style={{ textAlign: "center", padding: 60, color: C.muted }}>
+          <div style={{
+            width: 36, height: 36, margin: "0 auto 14px",
+            border: `3px solid ${C.border}`, borderTopColor: C.accent,
+            borderRadius: "50%", animation: "spin 0.7s linear infinite"
+          }} />
+          <p style={{ fontSize: 14 }}>Running SQL query + RAG search in parallel…</p>
+        </div>
+      )}
+
+      {/* Error */}
+      {error && (
+        <div style={{ padding: "12px 16px", background: `${C.red}15`, border: `1px solid ${C.red}30`, borderRadius: 10, color: C.red, fontSize: 13 }}>
+          ⚠ {error}
+        </div>
+      )}
+
+      {/* Results */}
+      {result && !loading && (
+        <>
+          {/* AI Synthesis bar */}
+          <Card style={{
+            padding: "14px 20px",
+            background: `linear-gradient(135deg, ${C.accentDim}, ${C.purpleDim || C.accentDim})`,
+            border: `1px solid ${C.accent}30`,
+          }}>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+              <span style={{ fontSize: 20, flexShrink: 0 }}>✨</span>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.accent, marginBottom: 4, fontFamily: "'IBM Plex Mono',monospace", letterSpacing: "0.08em" }}>AI SYNTHESIS</div>
+                <p style={{ fontSize: 13.5, color: C.text, lineHeight: 1.65, margin: 0 }}>{result.synthesis}</p>
+              </div>
+            </div>
+          </Card>
+
+          {/* Two-panel layout */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "start" }}>
+
+            {/* SQL Panel */}
+            <Card style={{ padding: 0, overflow: "hidden" }}>
+              <div style={{
+                padding: "12px 16px", borderBottom: `1px solid ${C.border}`,
+                display: "flex", alignItems: "center", justifyContent: "space-between",
+                background: `${C.accentDim}`,
+              }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <Database size={14} color={C.accent} />
+                  <span style={{ fontSize: 13, fontWeight: 700, color: C.accent }}>SQL Records</span>
+                  {sqlOk && (
+                    <span style={{
+                      fontSize: 10, background: C.accent + "22", color: C.accent,
+                      border: `1px solid ${C.accent}40`, borderRadius: 20, padding: "2px 8px", fontWeight: 700
+                    }}>
+                      {result.sql.total_rows} rows
+                    </span>
+                  )}
+                </div>
+                {result.sql.sql && (
+                  <button onClick={() => setShowSql(s => !s)} style={{
+                    background: "none", border: `1px solid ${C.border}`, borderRadius: 6,
+                    color: C.muted, cursor: "pointer", padding: "3px 8px", fontSize: 10,
+                    fontFamily: "'IBM Plex Mono',monospace",
+                  }}>
+                    {showSql ? "Hide SQL" : "Show SQL"}
+                  </button>
+                )}
+              </div>
+
+              {showSql && result.sql.sql && (
+                <div style={{
+                  padding: "10px 16px", background: C.bg,
+                  borderBottom: `1px solid ${C.border}`,
+                  fontFamily: "'IBM Plex Mono',monospace", fontSize: 11.5,
+                  color: C.accent, lineHeight: 1.7, overflowX: "auto",
+                }}>
+                  {result.sql.sql}
+                </div>
+              )}
+
+              {result.sql.error && (
+                <div style={{ padding: 16, color: C.red, fontSize: 12 }}>⚠ {result.sql.error}</div>
+              )}
+
+              {sqlOk ? (
+                <div style={{ overflowX: "auto", maxHeight: 420 }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                    <thead>
+                      <tr style={{ background: C.surface, position: "sticky", top: 0 }}>
+                        {result.sql.columns.map(col => (
+                          <th key={col} style={{
+                            padding: "8px 12px", textAlign: "left",
+                            color: C.muted, fontWeight: 600, fontSize: 11,
+                            borderBottom: `1px solid ${C.border}`,
+                            fontFamily: "'IBM Plex Mono',monospace",
+                            letterSpacing: "0.04em", whiteSpace: "nowrap",
+                          }}>{col}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {result.sql.rows.map((row, ri) => (
+                        <tr key={ri} style={{ borderBottom: `1px solid ${C.borderSoft}` }}
+                          onMouseEnter={e => e.currentTarget.style.background = C.hover}
+                          onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                        >
+                          {result.sql.columns.map(col => (
+                            <td key={col} style={{
+                              padding: "7px 12px", color: C.text, whiteSpace: "nowrap",
+                            }}>
+                              {typeof row[col] === "number"
+                                ? (Number.isInteger(row[col]) ? row[col].toLocaleString() : row[col].toFixed(2))
+                                : String(row[col] ?? "")}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : !result.sql.error && (
+                <div style={{ padding: 32, textAlign: "center", color: C.muted, fontSize: 13 }}>
+                  No matching database records found.
+                </div>
+              )}
+            </Card>
+
+            {/* RAG Panel */}
+            <Card style={{ padding: 0, overflow: "hidden" }}>
+              <div style={{
+                padding: "12px 16px", borderBottom: `1px solid ${C.border}`,
+                display: "flex", alignItems: "center", gap: 8,
+                background: `${C.yellowDim || C.accentDim}`,
+              }}>
+                <BookOpen size={14} color={C.yellow || C.accent} />
+                <span style={{ fontSize: 13, fontWeight: 700, color: C.yellow || C.accent }}>Document Context</span>
+                {ragOk && (
+                  <span style={{
+                    fontSize: 10, background: (C.yellow || C.accent) + "22",
+                    color: C.yellow || C.accent, border: `1px solid ${(C.yellow || C.accent)}40`,
+                    borderRadius: 20, padding: "2px 8px", fontWeight: 700
+                  }}>
+                    {result.rag.chunks.length} chunks
+                  </span>
+                )}
+              </div>
+
+              {result.rag.error && (
+                <div style={{ padding: 16, color: C.red, fontSize: 12 }}>⚠ {result.rag.error}</div>
+              )}
+
+              {ragOk ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 0, maxHeight: 460, overflowY: "auto" }}>
+                  {result.rag.chunks.map((chunk, i) => (
+                    <div key={i} style={{
+                      padding: "12px 16px",
+                      borderBottom: `1px solid ${C.borderSoft}`,
+                      transition: "background .15s",
+                    }}
+                      onMouseEnter={e => e.currentTarget.style.background = C.hover}
+                      onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                    >
+                      <div style={{
+                        display: "inline-block", fontSize: 9, fontWeight: 700,
+                        color: C.yellow || C.accent, background: (C.yellow || C.accent) + "12",
+                        border: `1px solid ${(C.yellow || C.accent)}30`,
+                        borderRadius: 6, padding: "2px 8px", marginBottom: 6,
+                        fontFamily: "'IBM Plex Mono',monospace", letterSpacing: "0.06em",
+                      }}>
+                        📄 {chunk.source}
+                      </div>
+                      <p style={{ fontSize: 12.5, color: C.text, lineHeight: 1.7, margin: 0 }}>
+                        {chunk.content}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              ) : !result.rag.error && (
+                <div style={{ padding: 32, textAlign: "center", color: C.muted, fontSize: 13 }}>
+                  No relevant policy documents found.
+                </div>
+              )}
+            </Card>
+
+          </div>
+        </>
+      )}
+
+      {/* Empty state */}
+      {!result && !loading && !error && (
+        <div style={{ textAlign: "center", padding: 80, color: C.muted }}>
+          <Activity size={44} style={{ margin: "0 auto 16px", display: "block", opacity: .25 }} />
+          <p style={{ fontSize: 15, fontWeight: 600 }}>Hybrid Search ready</p>
+          <p style={{ fontSize: 13, marginTop: 6 }}>Type a question above to query both the database and your documents simultaneously.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 const TABS = [
-  { id: "chat", label: "AI Assistant", icon: MessageSquare },
-  { id: "data", label: "Data Explorer", icon: Database },
-  { id: "dashboard", label: "Dashboard", icon: BarChart2 },
-  { id: "policy", label: "Policy Hub", icon: BookOpen },
-  { id: "schema", label: "Schema Mapper", icon: GitFork },
-  { id: "settings", label: "Settings", icon: Settings },
+  { id: "chat",      label: "AI Assistant",  icon: MessageSquare },
+  { id: "hybrid",    label: "Hybrid Search", icon: Activity },
+  { id: "data",      label: "Data Explorer", icon: Database },
+  { id: "dashboard", label: "Dashboard",     icon: BarChart2 },
+  { id: "policy",    label: "Policy Hub",    icon: BookOpen },
+  { id: "schema",    label: "Schema Mapper", icon: GitFork },
+  { id: "settings",  label: "Settings",      icon: Settings },
 ];
 
+// ─── ROUTER ROOT ──────────────────────────────────────────────
 export default function App() {
+  return (
+    <Routes>
+      <Route path="/" element={<LandingPage />} />
+      <Route path="/login" element={<LoginPage />} />
+      <Route path="/app" element={<MainApp />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
+}
+// ─── MAIN DASHBOARD APP ────────────────────────────────────────
+function MainApp() {
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState("chat");
   const [activeDb, setActiveDb] = useState("");
   const [apiOk, setApiOk] = useState(null);
   const [theme, setTheme] = useState("dark");
+
   window.__theme = theme;
   const toggle = () => setTheme(t => t === "dark" ? "light" : "dark");
 
@@ -1563,19 +1871,34 @@ export default function App() {
 
           {/* Logo */}
           <div style={{ padding: "22px 18px 18px" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <div style={{
-                width: 34, height: 34, borderRadius: 10,
-                background: `linear-gradient(135deg,${C.accent},${C.purple})`,
-                display: "flex", alignItems: "center", justifyContent: "center",
-                boxShadow: `0 4px 12px ${C.accentGlow}`
-              }}>
-                <Bot size={16} color="#fff" />
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{
+                  width: 34, height: 34, borderRadius: 10,
+                  background: `linear-gradient(135deg,${C.accent},${C.purple})`,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  boxShadow: `0 4px 12px ${C.accentGlow}`
+                }}>
+                  <Bot size={16} color="#fff" />
+                </div>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: C.text, letterSpacing: "-0.02em" }}>DataAnalyst</div>
+                  <div style={{ fontSize: 9, color: C.muted, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", marginTop: 1 }}>Enterprise AI</div>
+                </div>
               </div>
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 800, color: C.text, letterSpacing: "-0.02em" }}>DataAnalyst</div>
-                <div style={{ fontSize: 9, color: C.muted, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", marginTop: 1 }}>Enterprise AI</div>
-              </div>
+              {/* Home button */}
+              <button onClick={() => navigate("/")} title="Back to Home"
+                style={{
+                  background: "none", border: `1px solid ${C.border}`, borderRadius: 7,
+                  color: C.muted, cursor: "pointer", padding: "4px 8px", fontSize: 11,
+                  fontFamily: "'Plus Jakarta Sans',sans-serif", transition: "all .15s",
+                  display: "flex", alignItems: "center", gap: 4,
+                }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = C.accent; e.currentTarget.style.color = C.accent; }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.color = C.muted; }}
+              >
+                ← Home
+              </button>
             </div>
           </div>
 
@@ -1658,11 +1981,12 @@ export default function App() {
               </span>
             </div>
           )}
-          {activeTab === "chat" && <ChatTab />}
-          {activeTab === "data" && <DataExplorerTab activeDb={activeDb} />}
-          {activeTab === "dashboard" && <DashboardTab />}
-          {activeTab === "policy" && <PolicyTab />}
-          {activeTab === "schema" && <SchemaMapperTab />}
+          {activeTab === "chat"     && <ChatTab />}
+          {activeTab === "hybrid"   && <HybridSearchTab />}
+          {activeTab === "data"     && <DataExplorerTab activeDb={activeDb} />}
+          {activeTab === "dashboard"&& <DashboardTab />}
+          {activeTab === "policy"   && <PolicyTab />}
+          {activeTab === "schema"   && <SchemaMapperTab />}
           {activeTab === "settings" && <SettingsTab activeDb={activeDb} setActiveDb={setActiveDb} />}
         </div>
       </div>

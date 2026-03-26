@@ -267,6 +267,27 @@ def rebuild_vector_db():
         raise HTTPException(status_code=500, detail=str(e))
 
 # ═══════════════════════════════════════════════
+# 3b. HYBRID SEARCH
+# ═══════════════════════════════════════════════
+
+class HybridSearchRequest(BaseModel):
+    query: str
+
+@app.post("/api/hybrid-search")
+def hybrid_search(req: HybridSearchRequest):
+    """
+    Fires SQL (NL→SQL→execute) and RAG (ChromaDB similarity search)
+    concurrently, then synthesizes results with Gemini.
+    Returns structured JSON with both result lanes plus an AI insight.
+    """
+    try:
+        from tools.hybrid_tool import run_hybrid_search
+        result = run_hybrid_search(req.query)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ═══════════════════════════════════════════════
 # 4. INTERACTIVE DASHBOARD
 # ═══════════════════════════════════════════════
 
