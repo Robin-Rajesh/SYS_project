@@ -76,11 +76,16 @@ class SchemaRelationship(BaseModel):
 
 @app.get("/api/databases")
 def list_databases():
+    if config.IS_CLOUD:
+        return {"databases": ["Supabase PostgreSQL (Cloud)"], "active": "Supabase PostgreSQL (Cloud)"}
     files = [f for f in os.listdir(config.DATA_DIR) if f.endswith((".db", ".sqlite"))]
     return {"databases": files, "active": str(config.DB_PATH)}
 
 @app.post("/api/databases/connect")
 def connect_database(req: DbConnectRequest):
+    if config.IS_CLOUD:
+        return {"success": True, "uri": config.DB_URI}
+        
     uri = f"sqlite:///{config.DATA_DIR / req.db_filename}"
     try:
         set_database_connection(uri)
@@ -91,7 +96,9 @@ def connect_database(req: DbConnectRequest):
 
 @app.get("/api/tables")
 def list_tables(db_filename: Optional[str] = None):
-    if db_filename:
+    if config.IS_CLOUD:
+        engine = create_engine(config.DB_URI)
+    elif db_filename:
         engine = create_engine(f"sqlite:///{config.DATA_DIR / db_filename}")
     else:
         engine = get_engine()
@@ -100,7 +107,9 @@ def list_tables(db_filename: Optional[str] = None):
 
 @app.get("/api/tables/{table_name}/columns")
 def get_columns(table_name: str, db_filename: Optional[str] = None):
-    if db_filename:
+    if config.IS_CLOUD:
+        engine = create_engine(config.DB_URI)
+    elif db_filename:
         engine = create_engine(f"sqlite:///{config.DATA_DIR / db_filename}")
     else:
         engine = get_engine()
@@ -184,7 +193,20 @@ async def chat_stream(req: ChatRequest):
                             if tc["name"] == "visualization_tool":
                                 try:
                                     from tools.visualizer_tool import _create_chart
-                                    payload = json.loads(tc["args"].get("input_json", "{}"))
+                                    
+                                    # Универсальная распаковка аргументов LangChain LLM 
+                                    args_val = tc.get("args", {})
+                                    if isinstance(args_val, str):
+                                        args_dict = json.loads(args_val)
+                                    else:
+                                        args_dict = args_val
+                                        
+                                    if "input_json" in args_dict:
+                                        in_json = args_dict["input_json"]
+                                        payload = json.loads(in_json) if isinstance(in_json, str) else in_json
+                                    else:
+                                        payload = args_dict
+
                                     df = pd.DataFrame(payload.get("data", []))
                                     if not df.empty:
                                         fig = _create_chart(
@@ -196,9 +218,11 @@ async def chat_stream(req: ChatRequest):
                                             payload.get("color_column", "")
                                         )
                                         plotly_json = fig.to_json()
-                                except Exception:
-                                    pass
-                    content = ""
+                                except Exception as e:
+                                    import traceback
+                                    print("❌ VISUALIZER PARSE ERROR:", e)
+                                    traceback.print_exc()
+                        content = ""
                     if hasattr(msg, "content"):
                         if isinstance(msg.content, str):
                             content = msg.content
@@ -233,6 +257,74 @@ async def chat_stream(req: ChatRequest):
 def clear_chat():
     clear_memory()
     return {"success": True}
+
+_cached_general_suggestions = None
+
+@app.get("/api/chat/suggestions")
+async def get_chat_suggestions(context: str = None):
+    """
+    Generates 4 dynamic business questions using the LLM.
+    If 'context' is provided (e.g., the last user message), it generates
+    follow-up questions. Otherwise, it generates general 
+    exploratory questions based on the schema.
+    """
+    global _cached_general_suggestions
+    from tools.sql_tool import get_schema, get_db_index
+    from agent import llm
+    
+    # Return cache if no context is provided and cache exists
+    if not context and _cached_general_suggestions:
+        return {"suggestions": _cached_general_suggestions}
+
+    schema = get_schema()
+    db_index = get_db_index()
+
+    if context:
+        prompt = f"""
+You are a Senior Data Analyst. The user just asked: "{context}"
+Based on our database schema below, generate exactly 4 highly relevant FOLLOW-UP 
+business questions the user should ask next. Focus on drilling deeper into the data or finding anomalies.
+CRITICAL: Keep EACH question very short and punchy (under 10 words).
+Return ONLY a valid JSON array of 4 strings. No markdown formatting or extra text.
+
+CORE SCHEMA:
+{schema}
+"""
+    else:
+        prompt = f"""
+You are a Senior Data Analyst. Based on the database schema below, 
+generate exactly 4 highly insightful, distinct business questions an executive would want to ask.
+Focus on revenue, profit margins, anomalies, and top performers.
+CRITICAL: Keep EACH question very short and punchy (under 10 words).
+Return ONLY a valid JSON array of 4 strings. No markdown formatting or extra text.
+
+CORE SCHEMA:
+{schema}
+"""
+
+    try:
+        response = llm.invoke(prompt)
+        text = response.content.replace("```json", "").replace("```", "").strip()
+        suggestions = json.loads(text)
+        
+        # Basic validation
+        if isinstance(suggestions, list) and len(suggestions) >= 1:
+            suggestions = suggestions[:4]
+            if not context:
+                _cached_general_suggestions = suggestions
+            return {"suggestions": suggestions}
+    except Exception as e:
+        print("Suggestion generation failed:", e)
+        pass
+
+    # Fallback if LLM fails
+    fallback = [
+        "What are the top 5 products by profit?",
+        "Show total sales by region as a bar chart",
+        "Plot revenue over time as a line chart",
+        "Which product category has the highest profit margin?"
+    ]
+    return {"suggestions": fallback}
 
 # ═══════════════════════════════════════════════
 # 3. POLICY HUB
@@ -531,6 +623,43 @@ def get_relationships():
         with open(METADATA_PATH) as f:
             return json.load(f)
     return {"relationships": []}
+
+@app.post("/api/schema/relationships/auto-map")
+def auto_map_relationships():
+    from tools.sql_tool import get_schema
+    from agent import llm
+    
+    schema = get_schema()
+    prompt = f"""
+You are an expert Database Architect. Analyze the following SQLite database schema and identify ALL logical Foreign Key to Primary Key relationships that form the Star Schema.
+Return ONLY a valid JSON array of objects, with NO markdown formatting or extra text.
+Each object MUST have exactly these exact keys:
+"source_db" (string: usually 'sales_normalized_1_1.db')
+"source_table" (string: the table with the foreign key, e.g., 'orders' or 'sales')
+"source_column" (string: the foreign key column)
+"target_db" (string: usually 'sales_normalized_1_1.db')
+"target_table" (string: the table with the primary key, e.g., 'customers' or 'products')
+"target_column" (string: the primary key column)
+"type" (string: MUST BE "Many-to-One", "One-to-One", or "One-to-Many")
+
+Strictly map every dimension table to the central fact table.
+
+SCHEMA:
+{schema}
+"""
+    try:
+        res = llm.invoke(prompt)
+        text = res.content.replace("```json", "").replace("```", "").strip()
+        rels = json.loads(text)
+        if isinstance(rels, list):
+            meta = {"relationships": rels}
+            with open(METADATA_PATH, "w") as f:
+                json.dump(meta, f, indent=4)
+            return {"success": True, "relationships": rels}
+        return {"success": False, "error": "LLM did not return a list"}
+    except Exception as e:
+        print("Auto-map failed:", e)
+        return {"success": False, "error": str(e)}
 
 @app.post("/api/schema/relationships")
 def add_relationship(rel: SchemaRelationship):

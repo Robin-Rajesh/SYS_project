@@ -40,6 +40,9 @@ def _create_chart(df: pd.DataFrame, chart_type: str,
     """
     chart_fn = CHART_FUNCTIONS.get(chart_type, px.bar)
 
+    # Deduplicate column names to prevent Plotly/Narwhals crash on JOINs
+    df = df.loc[:, ~df.columns.duplicated()]
+
     # Common keyword arguments shared across most chart types
     kwargs = {"data_frame": df, "title": title}
     kwargs["color_discrete_sequence"] = px.colors.qualitative.Vivid

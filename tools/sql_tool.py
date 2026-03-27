@@ -23,8 +23,8 @@ import config
 # 1. DATABASE ENGINE & SCHEMA INTROSPECTION (Dynamic)
 # ═══════════════════════════════════════════════════════════════
 
-# Default to the local SQLite DB, but can be overridden by the UI
-_current_db_uri = f"sqlite:///{config.DB_PATH}"
+# Default to the configured DB (Local SQLite or Cloud PG)
+_current_db_uri = config.DB_URI
 _engine = create_engine(_current_db_uri, echo=False)
 _schema_cache = None
 
@@ -45,62 +45,99 @@ def get_engine():
 
 def get_schema() -> str:
     """
-    Read (or return cached) schema of the database using SQLAlchemy inspect.
-    Injects table names and columns into correction prompts.
-    ALSO introspects all other .db files in data/ to support cross-database queries.
+    Returns a 'Core Schema' of the first 5 tables.
+    Used for the initial system prompt to give the AI context on the main tables.
     """
     global _schema_cache
     if _schema_cache:
         return _schema_cache
         
-    lines = []
-    
-    # 1. Introspect the PRIMARY database
+    lines = ["--- CORE DATABASE TABLES ---"]
     engine = get_engine()
     inspector = inspect(engine)
     tables = inspector.get_table_names()
     
-    if tables:
-        lines.append("--- PRIMARY DATABASE TABLES ---")
-        for table_name in tables[:5]:
-            columns = inspector.get_columns(table_name)
-            lines.append(f"Table: {table_name}")
-            lines.append("Columns:")
-            for col in columns:
-                lines.append(f"  - {col['name']}  ({col['type']})")
-            lines.append("")
+    for table_name in tables[:20]:
+        columns = inspector.get_columns(table_name)
+        lines.append(f"Table: {table_name}")
+        for col in columns:
+            lines.append(f"  - {col['name']}  ({col['type']})")
+        lines.append("")
 
-    # 2. Introspect ALL OTHER databases in data/
-    db_files = [f for f in os.listdir(config.DATA_DIR) if f.endswith((".db", ".sqlite"))]
-    active_db_name = os.path.basename(_current_db_uri.split("///")[-1])
-    
-    for db_file in db_files:
-        if db_file == active_db_name:
-            continue
-            
-        alias = os.path.splitext(db_file)[0]
-        alias = re.sub(r'[^a-zA-Z0-9_]', '_', alias)
-        db_path = f"sqlite:///{config.DATA_DIR / db_file}"
-        
-        try:
-            other_engine = create_engine(db_path)
-            other_inspector = inspect(other_engine)
-            other_tables = other_inspector.get_table_names()
-            
-            if other_tables:
-                lines.append(f"--- ATTACHED DATABASE: {alias} ---")
-                for table_name in other_tables[:3]: # Limit to avoid context bloat
-                    columns = other_inspector.get_columns(table_name)
-                    lines.append(f"Table: {alias}.{table_name}")
-                    lines.append("Columns:")
-                    for col in columns:
-                        lines.append(f"  - {col['name']}  ({col['type']})")
-                    lines.append("")
-        except Exception:
-            continue
-        
     _schema_cache = "\n".join(lines)
     return _schema_cache
+
+def get_db_index() -> str:
+    """
+    Returns a simple list of ALL table names in all connected databases.
+    This lets the AI know what exists without dumping 1000s of columns.
+    """
+    engine = get_engine()
+    inspector = inspect(engine)
+    primary = inspector.get_table_names()
+    
+    lines = [f"TOTAL TABLES: {len(primary)}", "TABLE NAME INDEX (PRIMARY):", ", ".join(primary)]
+    
+    db_files = [f for f in os.listdir(config.DATA_DIR) if f.endswith((".db", ".sqlite"))]
+    active_db_name = os.path.basename(_current_db_uri.split("///")[-1])
+    for db_file in db_files:
+        if db_file == active_db_name: continue
+        alias = os.path.splitext(db_file)[0]
+        alias = re.sub(r'[^a-zA-Z0-9_]', '_', alias)
+        try:
+            other_engine = create_engine(f"sqlite:///{config.DATA_DIR / db_file}")
+            other_insp = inspect(other_engine)
+            other_tabs = other_insp.get_table_names()
+            if other_tabs:
+                lines.append(f"\nTABLE NAME INDEX ({alias}):")
+                lines.append(", ".join([f"{alias}.{t}" for t in other_tabs]))
+        except Exception: pass
+        
+    return "\n".join(lines)
+
+
+# ═══════════════════════════════════════════════════════════════
+# 2. SCHEMA INSPECTION TOOL
+# ═══════════════════════════════════════════════════════════════
+
+from langchain.tools import tool
+
+@tool
+def inspect_table_columns(table_name: str) -> str:
+    """
+    Returns the full list of columns and types for a specific table.
+    Use this if you see a table in the INDEX that you need to query, 
+    but don't have its columns in the CORE SCHEMA.
+    """
+    try:
+        engine = get_engine()
+        # Handle cross-db aliases (e.g. 'other_db.table_name')
+        if "." in table_name:
+            alias, real_name = table_name.split(".", 1)
+            # Find the actual .db file for this alias
+            db_files = [f for f in os.listdir(config.DATA_DIR) if f.endswith((".db", ".sqlite"))]
+            target_path = None
+            for db_file in db_files:
+                curr_alias = re.sub(r'[^a-zA-Z0-9_]', '_', os.path.splitext(db_file)[0])
+                if curr_alias == alias:
+                    target_path = config.DATA_DIR / db_file
+                    break
+            if not target_path:
+                return f"ERROR: Database alias '{alias}' not found."
+            engine = create_engine(f"sqlite:///{target_path}")
+            table_name = real_name
+
+        inspector = inspect(engine)
+        if table_name not in inspector.get_table_names():
+            return f"ERROR: Table '{table_name}' does not exist."
+            
+        columns = inspector.get_columns(table_name)
+        res = [f"SCHEMA FOR TABLE: {table_name}", "Columns:"]
+        for col in columns:
+            res.append(f"  - {col['name']} ({col['type']})")
+        return "\n".join(res)
+    except Exception as e:
+        return f"ERROR: {str(e)}"
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -183,21 +220,22 @@ def sql_query_tool(query: str) -> str:
             with get_engine().connect() as conn:
                 # --- AUTO-ATTACH OTHER DATABASES ---
                 # Search for all other .db files in the data/ folder and ATTACH them
-                # so the agent can perform cross-database JOINs.
-                db_files = [f for f in os.listdir(config.DATA_DIR) if f.endswith((".db", ".sqlite"))]
-                active_db_name = os.path.basename(_current_db_uri.split("///")[-1])
-                
-                for db_file in db_files:
-                    if db_file != active_db_name:
-                        alias = os.path.splitext(db_file)[0]
-                        # Sanitize alias (letters and underscores only)
-                        alias = re.sub(r'[^a-zA-Z0-9_]', '_', alias)
-                        attach_path = str(config.DATA_DIR / db_file).replace("\\", "/")
-                        try:
-                            conn.execute(text(f"ATTACH DATABASE '{attach_path}' AS {alias}"))
-                        except Exception as attach_err:
-                            # If it's already attached or fails, we skip it
-                            pass
+                # so the agent can perform cross-database JOINs (SQLite ONLY).
+                if not config.IS_CLOUD:
+                    db_files = [f for f in os.listdir(config.DATA_DIR) if f.endswith((".db", ".sqlite"))]
+                    active_db_name = os.path.basename(_current_db_uri.split("///")[-1])
+                    
+                    for db_file in db_files:
+                        if db_file != active_db_name:
+                            alias = os.path.splitext(db_file)[0]
+                            # Sanitize alias (letters and underscores only)
+                            alias = re.sub(r'[^a-zA-Z0-9_]', '_', alias)
+                            attach_path = str(config.DATA_DIR / db_file).replace("\\", "/")
+                            try:
+                                conn.execute(text(f"ATTACH DATABASE '{attach_path}' AS {alias}"))
+                            except Exception as attach_err:
+                                # If it's already attached or fails, we skip it
+                                pass
 
                 df = pd.read_sql(text(current_sql), conn)
 
@@ -214,7 +252,8 @@ def sql_query_tool(query: str) -> str:
             result_json = df.head(500).to_dict(orient="records")
 
             return (
-                f"Query executed successfully. Rows returned: {len(df)}\n\n"
+                f"Query executed successfully. Rows returned: {len(df)}\n"
+                f"Executed SQL: ```sql\n{current_sql}\n```\n\n"
                 f"{result_preview}\n\n"
                 f"[RAW_JSON]{json.dumps(result_json)}[/RAW_JSON]"
             )

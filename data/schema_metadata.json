@@ -1,12 +1,48 @@
 {
     "relationships": [
         {
-            "source_db": "sales.db",
-            "source_table": "sales",
-            "source_column": "Category",
-            "target_db": "master_data.db",
+            "source_db": "sales_normalized_1_1.db",
+            "source_table": "orders",
+            "source_column": "customer_id",
+            "target_db": "sales_normalized_1_1.db",
             "target_table": "customers",
             "target_column": "customer_id",
+            "type": "Many-to-One"
+        },
+        {
+            "source_db": "sales_normalized_1_1.db",
+            "source_table": "orders",
+            "source_column": "location_id",
+            "target_db": "sales_normalized_1_1.db",
+            "target_table": "locations",
+            "target_column": "location_id",
+            "type": "Many-to-One"
+        },
+        {
+            "source_db": "sales_normalized_1_1.db",
+            "source_table": "orders",
+            "source_column": "product_id",
+            "target_db": "sales_normalized_1_1.db",
+            "target_table": "products",
+            "target_column": "product_id",
+            "type": "Many-to-One"
+        },
+        {
+            "source_db": "sales_normalized_1_1.db",
+            "source_table": "orders",
+            "source_column": "ship_mode_id",
+            "target_db": "sales_normalized_1_1.db",
+            "target_table": "shipping_methods",
+            "target_column": "ship_mode_id",
+            "type": "Many-to-One"
+        },
+        {
+            "source_db": "sales_normalized_1_1.db",
+            "source_table": "orders",
+            "source_column": "rep_id",
+            "target_db": "sales_normalized_1_1.db",
+            "target_table": "sales_reps",
+            "target_column": "rep_id",
             "type": "Many-to-One"
         }
     ]

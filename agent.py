@@ -1,39 +1,196 @@
 """
-agent.py — LangChain ReAct Agent Powered by Google Gemini 1.5 Flash
-====================================================================
-Uses langgraph's create_react_agent (the modern LangChain approach)
-to build a tool-calling agent with:
-  - Gemini 1.5 Flash LLM (temperature=0)
-  - Three tools: sql_query_tool, policy_search_tool, visualization_tool
-  - A detailed system prompt preventing hallucination
-  - Conversation memory (last 5 exchanges kept in a message list)
-  - A single entry point: run_agent(user_input) → str
+agent.py — LangChain ReAct Agent Powered by Google Gemini
+==========================================================
+Uses langgraph's create_react_agent to build a tool-calling agent with:
+- Gemini LLM (temperature=0)
+- Three tools: sql_query_tool, policy_search_tool, visualization_tool
+- A detailed system prompt preventing hallucination
+- Financial-year-aware quarter resolution (Q4 = Jan–Mar, the year-end quarter)
+- Conversation memory (last 10 exchanges kept in a message list)
+- A single entry point: run_agent(user_input) → str
 """
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.prebuilt import create_react_agent
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 import json
+from datetime import date
 
-# Import project config and all three tools
 import config
-from tools.sql_tool import sql_query_tool
+from tools.sql_tool import sql_query_tool, inspect_table_columns
 from tools.rag_tool import policy_search_tool
 from tools.visualizer_tool import visualization_tool
 
+
 # ═══════════════════════════════════════════════════════════════
-# 1. DYNAMIC SYSTEM PROMPT
+# 1. FINANCIAL QUARTER RESOLVER
+# ═══════════════════════════════════════════════════════════════
+
+def _resolve_financial_quarters() -> str:
+    """
+    Returns a string block describing the financial year quarter mapping
+    and pre-computes 'last quarter', 'this quarter', etc. relative to today.
+
+    Financial Year definition (April → March):
+        Q1 = April   – June      (months 4–6)
+        Q2 = July    – September (months 7–9)
+        Q3 = October – December  (months 10–12)
+        Q4 = January – March     (months 1–3)  ← year-end / "last quarter"
+
+    'Last quarter' always refers to Q4 (January–March) of the most recent
+    completed financial year because that is the financial year-end quarter.
+    """
+    today = date.today()
+    current_month = today.month
+    current_year  = today.year
+
+    # Determine which FY quarter we are currently in
+    if 4 <= current_month <= 6:
+        current_fy_q = "Q1"
+        current_q_months = "April–June"
+        current_q_year   = current_year
+        last_q_label     = "Q4 (January–March)"
+        last_q_start     = f"{current_year - 1}-01-01"
+        last_q_end       = f"{current_year - 1}-03-31"
+    elif 7 <= current_month <= 9:
+        current_fy_q = "Q2"
+        current_q_months = "July–September"
+        current_q_year   = current_year
+        last_q_label     = "Q1 (April–June)"
+        last_q_start     = f"{current_year}-04-01"
+        last_q_end       = f"{current_year}-06-30"
+    elif 10 <= current_month <= 12:
+        current_fy_q = "Q3"
+        current_q_months = "October–December"
+        current_q_year   = current_year
+        last_q_label     = "Q2 (July–September)"
+        last_q_start     = f"{current_year}-07-01"
+        last_q_end       = f"{current_year}-09-30"
+    else:  # January–March
+        current_fy_q = "Q4"
+        current_q_months = "January–March"
+        current_q_year   = current_year
+        last_q_label     = "Q3 (October–December)"
+        last_q_start     = f"{current_year - 1}-10-01"
+        last_q_end       = f"{current_year - 1}-12-31"
+
+    is_pg = config.IS_CLOUD
+    date_fn = "EXTRACT(MONTH FROM date_column)" if is_pg else "strftime('%m', date_column)"
+    
+    return f"""
+FINANCIAL YEAR & QUARTER DEFINITIONS (CRITICAL — READ CAREFULLY):
+==================================================================
+This business uses an April–March financial year. Quarter mapping:
+
+  Q1  =  April     – June       (months 4, 5, 6)
+  Q2  =  July      – September  (months 7, 8, 9)
+  Q3  =  October   – December   (months 10, 11, 12)
+  Q4  =  January   – March      (months 1, 2, 3)   ← YEAR-END QUARTER
+
+TODAY: {today.isoformat()}
+CURRENT FINANCIAL QUARTER: {current_fy_q} ({current_q_months} {current_q_year})
+
+TERM RESOLUTION RULES — apply these BEFORE writing any SQL:
+  • "last quarter"    → Q4 = January to March, i.e. {last_q_start} to {last_q_end}
+                        (Q4 is ALWAYS the "last quarter" because it is the
+                         financial year-end quarter, regardless of calendar date)
+  • "this quarter"    → {current_fy_q} ({current_q_months} {current_q_year})
+  • "Q1" alone        → April–June   → (Months 4, 5, 6)
+  • "Q2" alone        → July–Sep     → (Months 7, 8, 9)
+  • "Q3" alone        → Oct–Dec      → (Months 10, 11, 12)
+  • "Q4" alone        → Jan–Mar      → (Months 1, 2, 3)
+
+SYNTAX NOTE (Using {'PostgreSQL' if is_pg else 'SQLite'}):
+  • Use {date_fn} for month extraction.
+"""
+
+
+# ═══════════════════════════════════════════════════════════════
+# 2. NORMALIZED SCHEMA DESCRIPTION
+# ═══════════════════════════════════════════════════════════════
+
+NORMALIZED_SCHEMA = """
+DATABASE: sales_normalized.db  (SQLite, 100 000 orders, 2020-01-01 → 2024-12-31)
+=========================================================================
+The database is fully normalised into 6 tables. ALWAYS JOIN — never assume
+denormalised columns exist on orders directly.
+
+TABLE: orders
+  order_id       TEXT   – primary key  (e.g. 'ORD-0000001')
+  customer_id    TEXT   – FK → customers.customer_id
+  location_id    INTEGER – FK → locations.location_id
+  product_id     TEXT   – FK → products.product_id
+  ship_mode_id   INTEGER – FK → shipping_methods.ship_mode_id
+  rep_id         INTEGER – FK → sales_reps.rep_id
+  order_date     TEXT   – 'YYYY-MM-DD' (use strftime() for date math)
+  ship_date      TEXT   – 'YYYY-MM-DD'
+  quantity       INTEGER
+  sales_amount   REAL
+  discount       REAL
+  discount_tier  TEXT
+  profit         REAL
+  profit_margin  REAL
+  payment_mode   TEXT
+  return_status  TEXT
+
+TABLE: customers
+  customer_id      TEXT  – PK
+  customer_name    TEXT
+  customer_segment TEXT  (e.g. 'Consumer', 'Corporate', 'Home Office')
+
+TABLE: products
+  product_id    TEXT – PK
+  product_name  TEXT
+  category      TEXT  (e.g. 'Furniture', 'Office Supplies', 'Technology')
+  sub_category  TEXT
+  cost_price    REAL
+  selling_price REAL
+
+TABLE: locations
+  location_id  INTEGER – PK
+  city         TEXT
+  state        TEXT
+  region       TEXT  (e.g. 'East', 'West', 'North', 'South')
+
+TABLE: shipping_methods
+  ship_mode_id  INTEGER – PK
+  ship_mode     TEXT  (e.g. 'First Class', 'Same Day', 'Second Class', 'Standard Class')
+
+TABLE: sales_reps
+  rep_id    INTEGER – PK
+  sales_rep TEXT
+
+STANDARD JOIN TEMPLATE (copy-paste and extend as needed):
+  SELECT ...
+  FROM   orders o
+  JOIN   customers        c  ON o.customer_id  = c.customer_id
+  JOIN   products         p  ON o.product_id   = p.product_id
+  JOIN   locations        l  ON o.location_id  = l.location_id
+  JOIN   shipping_methods sm ON o.ship_mode_id = sm.ship_mode_id
+  JOIN   sales_reps       sr ON o.rep_id       = sr.rep_id
+  WHERE  ...
+"""
+
+
+# ═══════════════════════════════════════════════════════════════
+# 3. DYNAMIC SYSTEM PROMPT
 # ═══════════════════════════════════════════════════════════════
 
 def get_system_prompt() -> str:
     """
-    Generates the system prompt dynamically, injecting the schema 
-    of whatever database is currently connected.
+    Generates the system prompt dynamically.
+    Injects:
+      - The normalised schema description
+      - Real-time financial quarter resolution
+      - Cross-database relationship metadata (if present)
     """
-    from tools.sql_tool import get_schema
-    current_schema = get_schema()
-    
-    # Load Star Schema relationships
+    from tools.sql_tool import get_schema, get_db_index
+
+    live_schema = get_schema()          # schema of whichever DB is currently connected
+    db_index = get_db_index()           # Index of ALL tables
+    quarter_block = _resolve_financial_quarters()
+
+    # Load Star Schema relationships if defined
     metadata_path = config.DATA_DIR / "schema_metadata.json"
     relationships_str = "No cross-database relationships defined yet."
     if metadata_path.exists():
@@ -43,49 +200,63 @@ def get_system_prompt() -> str:
             if metadata.get("relationships"):
                 rel_lines = []
                 for rel in metadata["relationships"]:
-                    rel_lines.append(f"- {rel['source_table']} ({rel['source_db']}).{rel['source_column']} -> {rel['target_table']} ({rel['target_db']}).{rel['target_column']} [{rel['type']}]")
+                    rel_lines.append(
+                        f"- {rel['source_table']} ({rel['source_db']}).{rel['source_column']}"
+                        f" -> {rel['target_table']} ({rel['target_db']}).{rel['target_column']}"
+                        f" [{rel['type']}]"
+                    )
                 relationships_str = "\n".join(rel_lines)
-        except:
+        except Exception:
             pass
 
     return f"""\
-You are an expert Data Analyst AI assistant with access to three tools:
+You are an expert Data Analyst AI assistant with access to these tools:
 
-1. sql_query_tool: Query the connected SQL database using SELECT statements only.
-   
-   MULTI-DATABASE CAPABILITY:
-   - All .db files in the /data folder are automatically ATTACHED.
-   - You can cross-join them using their filename (without .db) as the schema prefix.
-   - Example: To join 'sales.db' with 'users.db', use: 
-     SELECT * FROM sales JOIN users.users ON sales.Customer_ID = users.user_id;
+1. sql_query_tool        – Query the connected SQL database (SELECT only).
+2. inspect_table_columns – Get column details for a specific table. 
+3. policy_search_tool    – Search internal policy documents.
+4. visualization_tool   – Generate charts.
 
-   ENTERPRISE STAR SCHEMA RELATIONSHIPS:
+{quarter_block}
+
+{NORMALIZED_SCHEMA}
+
+--- SCALABLE SCHEMA DISCOVERY ---
+You have a 'Core Schema' below (the most important tables), but the database might have 100s more. 
+If a question refers to a table in the 'TABLE NAME INDEX' that you don't have columns for, 
+you MUST call 'inspect_table_columns' to see its schema before writing your SQL.
+
+CORE SCHEMA (Primary Tables):
+{live_schema}
+
+DATABASE INDEX (Full list of all tables):
+{db_index}
+
+ENTERPRISE STAR SCHEMA RELATIONSHIPS:
 {relationships_str}
 
-   ACTIVE DATABASE SCHEMA:
-{current_schema}
+MULTI-DATABASE CAPABILITY:
+  All .db files in /data are automatically ATTACHED. Use the filename
+  (without .db) as the schema prefix for cross-database joins.
+  Example: SELECT * FROM sales_normalized JOIN users.users ON ...
 
-2. policy_search_tool: Search internal policy documents, discount
-   approval matrices, and catalogs. Use this for any policy or product questions.
-
-3. visualization_tool: Generate and save charts. Always get data from
-   sql_query_tool first, then pass it to this tool as a JSON string.
-
-STRICT RULES YOU MUST FOLLOW:
-- Never invent or hallucinate data, numbers, metrics, or policy rules.
-- If data is unavailable, respond exactly: "DATA UNAVAILABLE: [reason]"
-- For hybrid questions (data + policy), ALWAYS call BOTH sql_query_tool
-  AND policy_search_tool before answering.
-- When user asks for a chart, ALWAYS call sql_query_tool first to get
-  data, then call visualization_tool with that data.
-- Think step by step. State your plan before executing tools.
-- Format your final answer clearly with sections if needed.
+STRICT RULES:
+  - NEVER invent data or column names. 
+  - If you need a table from the INDEX but don't know its columns, call 'inspect_table_columns'.
+  - If data is unavailable: respond "DATA UNAVAILABLE: [reason]"
+  - For charts: call sql_query_tool first, then visualization_tool.
+  - RULE: NEVER print file paths like 'C:\...\outputs\chart.html' in your final response. The UI renders the charts automatically.
+  - Format your final answer clearly with sections if needed.
+  - RULE MANDATORY: You MUST end every single analytical response with the exact SQL query you executed. Wrap it EXACTLY in a markdown block like this:
+```sql
+SELECT ...
+```
 """
 
+
 # ═══════════════════════════════════════════════════════════════
-# 2. LLM INITIALIZATION
+# 4. LLM INITIALIZATION
 # ═══════════════════════════════════════════════════════════════
-# temperature=0 produces deterministic, factual responses.
 
 llm = ChatGoogleGenerativeAI(
     model=config.MODEL_NAME,
@@ -96,18 +267,16 @@ llm = ChatGoogleGenerativeAI(
 )
 
 # ═══════════════════════════════════════════════════════════════
-# 3. TOOL LIST
+# 5. TOOL LIST & REACT AGENT
 # ═══════════════════════════════════════════════════════════════
 
-tools = [sql_query_tool, policy_search_tool, visualization_tool]
+tools = [sql_query_tool, inspect_table_columns, policy_search_tool, visualization_tool]
 
-# ═══════════════════════════════════════════════════════════════
-# 4. REACT AGENT (langgraph)
-# ═══════════════════════════════════════════════════════════════
 
 def _state_modifier(state):
-    """Dynamically prepends the freshest system prompt into the message state."""
+    """Prepends the freshest system prompt into the message state."""
     return [SystemMessage(content=get_system_prompt())] + state["messages"]
+
 
 agent = create_react_agent(
     model=llm,
@@ -116,61 +285,52 @@ agent = create_react_agent(
 )
 
 # ═══════════════════════════════════════════════════════════════
-# 5. CONVERSATION MEMORY (manual window of last 5 exchanges)
+# 6. CONVERSATION MEMORY
 # ═══════════════════════════════════════════════════════════════
-# We maintain a simple list of messages and trim to the last k
-# exchanges (pairs of Human + AI messages) before each call.
 
 _chat_history: list = []
-_MEMORY_WINDOW = 10   # keep last 10 user/assistant pairs
+_MEMORY_WINDOW = 10  # keep last 10 user/assistant pairs
 
 
 def _trim_history():
     """Keep only the last _MEMORY_WINDOW pairs of messages."""
     global _chat_history
-    # Each exchange = 1 HumanMessage + 1 AIMessage = 2 messages
     max_messages = _MEMORY_WINDOW * 2
     if len(_chat_history) > max_messages:
         _chat_history = _chat_history[-max_messages:]
 
 
 # ═══════════════════════════════════════════════════════════════
-# 6. PUBLIC ENTRY POINT
+# 7. PUBLIC ENTRY POINTS
 # ═══════════════════════════════════════════════════════════════
 
 def _extract_text(content) -> str:
-    """Safely extracts text from the LLM's content field, which might be a list of dicts."""
+    """Safely extracts text from the LLM's content field."""
     if isinstance(content, list):
         texts = []
         for item in content:
-            if isinstance(item, dict) and 'text' in item:
-                texts.append(item['text'])
+            if isinstance(item, dict) and "text" in item:
+                texts.append(item["text"])
             elif isinstance(item, str):
                 texts.append(item)
         return " ".join(texts)
     return str(content)
 
+
 def run_agent(user_input: str) -> str:
     """
     Send a user message to the agent and return its text response.
-    Wraps the call in try/except so unhandled errors produce a
-    friendly message instead of a raw traceback.
     """
     global _chat_history
     try:
-        # Append the new user message to history
         _chat_history.append(HumanMessage(content=user_input))
         _trim_history()
 
-        # Invoke the agent with the full message history
         result = agent.invoke({"messages": _chat_history})
 
-        # Extract the final AI response
         response_messages = result.get("messages", [])
         ai_response = ""
-        
-        # Iterate backwards to find the first AIMessage with content
-        # Sometimes the model returns a tool call message and then a final message
+
         for msg in reversed(response_messages):
             if hasattr(msg, "content") and msg.content:
                 text = _extract_text(msg.content).strip()
@@ -179,24 +339,20 @@ def run_agent(user_input: str) -> str:
                     break
 
         if not ai_response:
-            # Fallback: Check if any message contains content
             all_content = [
-                _extract_text(m.content) 
-                for m in response_messages 
+                _extract_text(m.content)
+                for m in response_messages
                 if hasattr(m, "content") and m.content
             ]
             if all_content:
-                # Find the longest content block (likely the HTML report)
                 ai_response = max(all_content, key=len)
             else:
                 with open("outputs/debug_agent.txt", "w", encoding="utf-8") as f:
                     f.write(f"Result dump:\n{result}\n\n")
                 ai_response = "No response generated."
 
-        # Store the AI response in history
         _chat_history.append(AIMessage(content=ai_response))
         _trim_history()
-
         return ai_response
 
     except Exception as e:
@@ -212,15 +368,12 @@ def stream_agent(user_input: str):
     """
     global _chat_history
     try:
-        # Append the new user message to history
         _chat_history.append(HumanMessage(content=user_input))
         _trim_history()
 
         final_response = ""
         for step in agent.stream({"messages": _chat_history}):
             yield step
-            
-            # Capture the final AI message content to store in memory
             if "agent" in step:
                 msg = step["agent"]["messages"][-1]
                 if getattr(msg, "content", ""):
@@ -229,7 +382,6 @@ def stream_agent(user_input: str):
         if not final_response:
             final_response = "No response generated."
 
-        # Store the AI response in history
         _chat_history.append(AIMessage(content=final_response))
         _trim_history()
 
@@ -238,6 +390,6 @@ def stream_agent(user_input: str):
 
 
 def clear_memory():
-    """Reset conversation memory — called by the 'clear' command."""
+    """Reset conversation memory."""
     global _chat_history
     _chat_history.clear()

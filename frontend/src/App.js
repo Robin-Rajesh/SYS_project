@@ -7,7 +7,7 @@ import {
   Send, Trash2, RefreshCw, Download, Mail, Upload,
   Zap, Activity, Filter, SortAsc, SortDesc, ArrowRight, Bot, User,
   GitFork, Link, Unlink, CheckCircle, AlertCircle, TrendingUp, Plus, Sun, Moon,
-  Maximize2, Minimize2, ZoomIn, ZoomOut, Eye, EyeOff
+  Maximize2, Minimize2, ZoomIn, ZoomOut, Eye, EyeOff, FileText
 } from "lucide-react";
 import Plot from "react-plotly.js";
 import ReactMarkdown from "react-markdown";
@@ -177,6 +177,29 @@ function ChatTab() {
   const [steps, setSteps] = useState([]);
   const bottomRef = useRef();
 
+  const [suggestions, setSuggestions] = useState([
+    "Show me total sales by region as a bar chart",
+    "Plot revenue over time as a line chart",
+    "What are the top 5 products by profit?",
+    "Are there any policy violations with 25% discounts?"
+  ]);
+  const [suggestLoading, setSuggestLoading] = useState(false);
+
+  const fetchSuggestions = async (context = "") => {
+    setSuggestLoading(true);
+    try {
+      const qs = context ? `?context=${encodeURIComponent(context)}` : "";
+      const res = await fetch(`${API}/api/chat/suggestions${qs}`);
+      const data = await res.json();
+      if (data.suggestions && data.suggestions.length > 0) {
+        setSuggestions(data.suggestions);
+      }
+    } catch { }
+    setSuggestLoading(false);
+  };
+
+  useEffect(() => { fetchSuggestions(); }, []);
+
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, steps]);
 
   const sendMessage = useCallback(async () => {
@@ -248,6 +271,7 @@ function ChatTab() {
               plotlyJson: evt.plotly_json, sqlQuery: sql || null, ts: new Date()
             }]);
             pendingSql = null; setSteps([]); setLoading(false);
+            fetchSuggestions(userMsg.content); // get context-aware follow up questions
           } else if (evt.type === "error") {
             setMessages(p => [...p, { role: "assistant", content: `Error: ${evt.content}`, ts: new Date(), error: true }]);
             setSteps([]); setLoading(false);
@@ -262,24 +286,8 @@ function ChatTab() {
     await fetch(`${API}/api/chat/clear`, { method: "POST" });
     setMessages([{ role: "assistant", content: "Memory cleared. Starting fresh.", ts: new Date() }]);
     setSteps([]);
+    fetchSuggestions(); // reset to general suggestions
   };
-
-  // Smart Suggestions: shown after last AI message
-  const DYNAMIC_SUGGESTIONS = [
-    ["Which product category has the highest profit margin?", "Show me discount vs profit as a scatter chart", "Who are the top 5 customers by revenue?"],
-    ["What is the month-over-month revenue trend?", "Compare regional sales as a bar chart", "What is the average order value?"],
-    ["Show all cross-database relationships in the data", "Which customers have purchased the most products?", "What percentage of orders have discounts over 20%?"],
-    ["Show me top-selling sub-categories", "Which region has the lowest profit margin?", "Plot monthly revenue for the last year"],
-  ];
-
-  const getSuggestions = (msgCount) => DYNAMIC_SUGGESTIONS[msgCount % DYNAMIC_SUGGESTIONS.length];
-
-  const suggestions = [
-    "Show me total sales by region as a bar chart",
-    "Plot revenue over time as a line chart",
-    "What are the top 5 products by profit?",
-    "Are there any policy violations with 25% discounts?",
-  ];
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
@@ -337,7 +345,7 @@ function ChatTab() {
               }}>
                 <div className="markdown-body">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {msg.content}
+                    {msg.content ? msg.content.replace(/```sql[\s\S]*?```/gi, "").trim() : ""}
                   </ReactMarkdown>
                 </div>
               </div>
@@ -442,8 +450,10 @@ function ChatTab() {
       {/* Suggestions after last reply */}
       {!loading && messages.length > 1 && messages[messages.length - 1].role === 'assistant' && (
         <div style={{ padding: "0 24px 10px", display: "flex", gap: 6, flexWrap: "wrap", animation: "slideIn .25s ease" }}>
-          <span style={{ fontSize: 10, color: C.muted, width: '100%', marginBottom: 2, fontFamily: "'IBM Plex Mono',monospace" }}>Suggested questions:</span>
-          {getSuggestions(messages.length).map((s, i) => (
+          <span style={{ fontSize: 10, color: C.muted, width: '100%', marginBottom: 2, fontFamily: "'IBM Plex Mono',monospace" }}>
+            {suggestLoading ? "✨ Generating dynamic suggestions..." : "Suggested follow-ups:"}
+          </span>
+          {!suggestLoading && suggestions.map((s, i) => (
             <button key={i} onClick={() => { setInput(s); }}
               style={{
                 padding: "5px 12px", borderRadius: 20, background: C.surface,
@@ -460,7 +470,9 @@ function ChatTab() {
 
       {messages.length <= 1 && (
         <div style={{ padding: "0 24px 12px", display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {suggestions.map((s, i) => (
+          {suggestLoading ? (
+             <span style={{ fontSize: 11, color: C.muted, fontStyle: "italic" }}>✨ Generating context-aware suggestions...</span>
+          ) : suggestions.map((s, i) => (
             <button key={i} onClick={() => setInput(s)}
               style={{
                 padding: "5px 12px", borderRadius: 20, background: C.cardRaised,
@@ -719,145 +731,7 @@ function DataExplorerTab({ activeDb }) {
   );
 }
 
-// ─── DASHBOARD TAB ────────────────────────────────────────────
-function DashboardTab() {
-  useTheme();
-  const [tables, setTables] = useState([]);
-  const [cols, setCols] = useState([]);
-  const [table, setTable] = useState("");
-  const [xCol, setXCol] = useState("");
-  const [yCol, setYCol] = useState("");
-  const [chartType, setChartType] = useState("bar");
-  const [agg, setAgg] = useState("None");
-  const [limit, setLimit] = useState(50);
-  const [chartData, setChartData] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [insight, setInsight] = useState("");
-  const [insightLoading, setInsightLoading] = useState(false);
 
-  useEffect(() => {
-    fetch(`${API}/api/tables`).then(r => r.json()).then(d => {
-      setTables(d.tables); if (d.tables[0]) setTable(d.tables[0]);
-    }).catch(() => { });
-  }, []);
-
-  useEffect(() => {
-    if (!table) return;
-    fetch(`${API}/api/tables/${table}/columns`).then(r => r.json()).then(d => {
-      setCols(d.columns);
-      if (d.columns[0]) setXCol(d.columns[0].name);
-      const num = d.columns.find(c => ["INT", "FLOAT", "REAL", "NUMERIC"].some(t => c.type.toUpperCase().startsWith(t)));
-      setYCol(num?.name || d.columns[1]?.name || "");
-    }).catch(() => { });
-  }, [table]);
-
-  const generateChart = async () => {
-    if (!table || !xCol || !yCol) return;
-    setLoading(true); setChartData(null); setInsight("");
-    const params = new URLSearchParams({ table, x_col: xCol, y_col: yCol, chart_type: chartType, aggregation: agg, limit });
-    const res = await fetch(`${API}/api/dashboard/chart?${params}`);
-    if (res.ok) { const d = await res.json(); setChartData(d); }
-    setLoading(false);
-  };
-
-  const getInsight = async () => {
-    if (!chartData) return;
-    setInsightLoading(true);
-    const res = await fetch(`${API}/api/dashboard/ai-insight`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ rows: chartData.rows })
-    });
-    const d = await res.json(); setInsight(d.insight); setInsightLoading(false);
-  };
-
-  const chartTypes = [
-    { id: "bar", label: "Bar", emoji: "📊" }, { id: "line", label: "Line", emoji: "📈" },
-    { id: "pie", label: "Pie", emoji: "🥧" }, { id: "scatter", label: "Scatter", emoji: "✦" },
-  ];
-
-  return (
-    <div style={{ padding: 24, display: "flex", flexDirection: "column", gap: 20 }}>
-      <h2 style={{ fontSize: 19, fontWeight: 700, color: C.text, letterSpacing: "-0.02em" }}>Interactive Dashboard</h2>
-      <Card>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, marginBottom: 16 }}>
-          {[["Table", table, setTable, tables.map(t => ({ v: t, l: t }))],
-          ["X Axis", xCol, setXCol, cols.map(c => ({ v: c.name, l: c.name }))],
-          ["Y Axis", yCol, setYCol, cols.map(c => ({ v: c.name, l: c.name }))],
-          ["Aggregation", agg, setAgg, ["None", "SUM", "AVG", "COUNT", "MAX", "MIN"].map(a => ({ v: a, l: a }))],
-          ["Limit", limit, setLimit, [10, 25, 50, 100, 500].map(n => ({ v: n, l: `Top ${n}` }))]
-          ].map(([lbl, val, setter, opts]) => (
-            <div key={lbl}>
-              <label style={{ fontSize: 12, color: C.muted, display: "block", marginBottom: 6 }}>{lbl}</label>
-              <Select value={val} onChange={e => setter(lbl === "Limit" ? Number(e.target.value) : e.target.value)}>
-                {opts.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
-              </Select>
-            </div>
-          ))}
-        </div>
-        <div style={{ marginBottom: 16 }}>
-          <label style={{ fontSize: 12, color: C.muted, display: "block", marginBottom: 8 }}>Chart Type</label>
-          <div style={{ display: "flex", gap: 10 }}>
-            {chartTypes.map(ct => (
-              <button key={ct.id} onClick={() => setChartType(ct.id)}
-                style={{
-                  padding: "8px 16px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer",
-                  transition: "all .15s", background: chartType === ct.id ? C.accentDim : C.surface,
-                  color: chartType === ct.id ? C.accent : C.textSoft,
-                  border: `1px solid ${chartType === ct.id ? C.accent + "40" : C.border}`,
-                  boxShadow: chartType === ct.id ? `0 2px 8px ${C.accentGlow}` : "none"
-                }}>
-                {ct.emoji} {ct.label}
-              </button>
-            ))}
-          </div>
-        </div>
-        <Btn onClick={generateChart} disabled={loading || !table || !xCol || !yCol} icon={BarChart2}>
-          {loading ? <><Spinner size={13} /> Generating…</> : "Generate Chart"}
-        </Btn>
-      </Card>
-
-      {chartData && (
-        <>
-          <Card><PlotlyChart plotlyJson={chartData.plotly_json} style={{ height: 420 }} /></Card>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-            <Card style={{ overflow: "auto", maxHeight: 300 }}>
-              <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 12, color: C.text }}>Raw Data</h3>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                <thead><tr>{chartData.rows[0] && Object.keys(chartData.rows[0]).map(k => (
-                  <th key={k} style={{
-                    padding: "6px 10px", textAlign: "left", color: C.muted,
-                    borderBottom: `1px solid ${C.border}`
-                  }}>{k}</th>
-                ))}</tr></thead>
-                <tbody>{chartData.rows.slice(0, 50).map((row, i) => (
-                  <tr key={i} style={{ borderBottom: `1px solid ${C.border}22` }}>
-                    {Object.values(row).map((v, j) => (
-                      <td key={j} style={{ padding: "5px 10px", color: C.text }}>{String(v)}</td>
-                    ))}
-                  </tr>
-                ))}</tbody>
-              </table>
-            </Card>
-            <Card>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-                <h3 style={{ fontSize: 14, fontWeight: 600, color: C.text }}>✨ AI Insight</h3>
-                <Btn onClick={getInsight} disabled={insightLoading} icon={Zap}>
-                  {insightLoading ? <><Spinner size={13} /> Analyzing…</> : "Generate"}
-                </Btn>
-              </div>
-              {insight
-                ? <div style={{
-                  background: C.surface, borderLeft: `3px solid ${C.purple}`, borderRadius: 8,
-                  padding: "12px 16px", fontSize: 13, lineHeight: 1.7, color: C.text
-                }}>{insight}</div>
-                : <p style={{ color: C.muted, fontSize: 13 }}>Click "Generate" to get AI business insights on the current chart.</p>}
-            </Card>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
 
 // ─── POLICY HUB TAB ───────────────────────────────────────────
 function PolicyTab() {
@@ -1019,10 +893,48 @@ function SettingsTab({ activeDb, setActiveDb }) {
     const d = await res.json(); if (d.success) setActiveDb(d.uri);
   };
 
+  return (
+    <div style={{ padding: 24, display: "flex", flexDirection: "column", gap: 20 }}>
+      <h2 style={{ fontSize: 19, fontWeight: 700, color: C.text, letterSpacing: "-0.02em" }}>Settings</h2>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 20, maxWidth: 600 }}>
+        <Card>
+          <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 14, display: "flex", gap: 8, alignItems: "center", color: C.text }}>
+            <Database size={16} color={C.accent} /> Database Connection
+          </h3>
+          <label style={{ fontSize: 12, color: C.muted, display: "block", marginBottom: 6 }}>Select Database File</label>
+          <Select value={selectedDb} onChange={e => setSelectedDb(e.target.value)} style={{ marginBottom: 12 }}>
+            {databases.map(db => <option key={db} value={db}>{db}</option>)}
+          </Select>
+          <Btn onClick={connectDb} disabled={!selectedDb} icon={ArrowRight}>Connect</Btn>
+          <p style={{ fontSize: 12, color: C.muted, marginTop: 10 }}>
+            Active: <code style={{ color: C.accent }}>{activeDb || "—"}</code>
+          </p>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+// ─── EXECUTIVE REPORTS TAB ────────────────────────────────────
+function ReportsTab() {
+  useTheme();
+  const [scheduleTime, setScheduleTime] = useState("09:00");
+  const [recipientEmail, setRecipientEmail] = useState("");
+  const [schedEnabled, setSchedEnabled] = useState(true);
+  const [schedStatus, setSchedStatus] = useState(null);
+  const [reportHtml, setReportHtml] = useState("");
+  const [reportLoading, setReportLoading] = useState(false);
+  const [emailStatus, setEmailStatus] = useState("");
+  const [emailReport, setEmailReport] = useState("");
+  const [sendNowLoading, setSendNowLoading] = useState(false);
+
+  useEffect(() => {
+    fetch(`${API}/api/scheduler/status`).then(r => r.json()).then(setSchedStatus).catch(() => { });
+  }, []);
+
   const updateSchedule = async () => {
     await fetch(`${API}/api/scheduler/update`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
+      method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ time_str: scheduleTime, recipient_email: recipientEmail, enabled: schedEnabled })
     });
     const d = await fetch(`${API}/api/scheduler/status`).then(r => r.json()); setSchedStatus(d);
@@ -1045,31 +957,16 @@ function SettingsTab({ activeDb, setActiveDb }) {
   const emailGeneratedReport = async () => {
     if (!emailReport || !reportHtml) return;
     const res = await fetch(`${API}/api/report/email`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
+      method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ recipient_email: emailReport, html_content: reportHtml })
     });
-    const d = await res.json();
-    setEmailStatus(d.success ? "✅ Report emailed!" : `❌ ${d.detail}`);
+    const d = await res.json(); setEmailStatus(d.success ? "✅ Report emailed!" : `❌ ${d.detail}`);
   };
 
   return (
-    <div style={{ padding: 24, display: "flex", flexDirection: "column", gap: 20 }}>
-      <h2 style={{ fontSize: 19, fontWeight: 700, color: C.text, letterSpacing: "-0.02em" }}>Settings & Reports</h2>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
-        <Card>
-          <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 14, display: "flex", gap: 8, alignItems: "center", color: C.text }}>
-            <Database size={16} color={C.accent} /> Database Connection
-          </h3>
-          <label style={{ fontSize: 12, color: C.muted, display: "block", marginBottom: 6 }}>Select Database File</label>
-          <Select value={selectedDb} onChange={e => setSelectedDb(e.target.value)} style={{ marginBottom: 12 }}>
-            {databases.map(db => <option key={db} value={db}>{db}</option>)}
-          </Select>
-          <Btn onClick={connectDb} disabled={!selectedDb} icon={ArrowRight}>Connect</Btn>
-          <p style={{ fontSize: 12, color: C.muted, marginTop: 10 }}>
-            Active: <code style={{ color: C.accent }}>{activeDb || "—"}</code>
-          </p>
-        </Card>
+    <div style={{ padding: 24, display: "flex", flexDirection: "column", gap: 20, height: "100%", overflowY: "auto" }}>
+      <h2 style={{ fontSize: 19, fontWeight: 700, color: C.text, letterSpacing: "-0.02em" }}>Executive Reports</h2>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 20, maxWidth: 800 }}>
         <Card>
           <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 14, display: "flex", gap: 8, alignItems: "center", color: C.text }}>
             <Activity size={16} color={C.accent} /> Report Scheduler
@@ -1080,17 +977,12 @@ function SettingsTab({ activeDb, setActiveDb }) {
             </Badge>
           )}
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <div>
-              <label style={{ fontSize: 12, color: C.muted, display: "block", marginBottom: 6 }}>Daily Time</label>
-              <Input type="time" value={scheduleTime} onChange={e => setScheduleTime(e.target.value)} />
-            </div>
-            <div>
-              <label style={{ fontSize: 12, color: C.muted, display: "block", marginBottom: 6 }}>Recipient Email</label>
-              <Input value={recipientEmail} onChange={e => setRecipientEmail(e.target.value)} placeholder="manager@company.com" />
-            </div>
+            <div><label style={{ fontSize: 12, color: C.muted, display: "block", marginBottom: 6 }}>Daily Time</label>
+              <Input type="time" value={scheduleTime} onChange={e => setScheduleTime(e.target.value)} /></div>
+            <div><label style={{ fontSize: 12, color: C.muted, display: "block", marginBottom: 6 }}>Recipient Email</label>
+              <Input value={recipientEmail} onChange={e => setRecipientEmail(e.target.value)} placeholder="manager@company.com" /></div>
             <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, cursor: "pointer", color: C.text }}>
-              <input type="checkbox" checked={schedEnabled} onChange={e => setSchedEnabled(e.target.checked)} />
-              Enable daily email report
+              <input type="checkbox" checked={schedEnabled} onChange={e => setSchedEnabled(e.target.checked)} /> Enable daily email report
             </label>
             <div style={{ display: "flex", gap: 8 }}>
               <Btn onClick={updateSchedule} icon={RefreshCw}>Update</Btn>
@@ -1102,7 +994,7 @@ function SettingsTab({ activeDb, setActiveDb }) {
           </div>
         </Card>
       </div>
-      <Card>
+      <Card style={{ maxWidth: 800 }}>
         <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 14, display: "flex", gap: 8, alignItems: "center", color: C.text }}>
           <TrendingUp size={16} color={C.accent} /> AI Executive Sales Report
         </h3>
@@ -1120,8 +1012,7 @@ function SettingsTab({ activeDb, setActiveDb }) {
               </a>
             </div>
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <Input value={emailReport} onChange={e => setEmailReport(e.target.value)}
-                placeholder="Email report to..." style={{ maxWidth: 300 }} />
+              <Input value={emailReport} onChange={e => setEmailReport(e.target.value)} placeholder="Email report to..." style={{ maxWidth: 300 }} />
               <Btn variant="secondary" onClick={emailGeneratedReport} disabled={!emailReport} icon={Mail}>Email Report</Btn>
             </div>
             <details>
@@ -1138,90 +1029,46 @@ function SettingsTab({ activeDb, setActiveDb }) {
 // ─── SCHEMA MAPPER TAB ────────────────────────────────────────
 function SchemaMapperTab() {
   useTheme();
-  const [databases, setDatabases] = useState([]);
   const [relationships, setRelationships] = useState([]);
-  const [srcDb, setSrcDb] = useState("");
-  const [srcTables, setSrcTables] = useState([]);
-  const [srcTable, setSrcTable] = useState("");
-  const [srcCols, setSrcCols] = useState([]);
-  const [srcCol, setSrcCol] = useState("");
-  const [tgtDb, setTgtDb] = useState("");
-  const [tgtTables, setTgtTables] = useState([]);
-  const [tgtTable, setTgtTable] = useState("");
-  const [tgtCols, setTgtCols] = useState([]);
-  const [tgtCol, setTgtCol] = useState("");
-  const [relType, setRelType] = useState("Many-to-One");
-  const [saving, setSaving] = useState(false);
-  const [status, setStatus] = useState("");
   const [isMaximized, setIsMaximized] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [showColumns, setShowColumns] = useState(true);
+  const [autoMapping, setAutoMapping] = useState(false);
 
   useEffect(() => {
-    fetch(`${API}/api/databases`).then(r => r.json()).then(d => {
-      setDatabases(d.databases);
-      if (d.databases[0]) { setSrcDb(d.databases[0]); setTgtDb(d.databases[0]); }
-    }).catch(() => { });
     loadRelationships();
   }, []);
 
-  const loadRelationships = () => {
-    fetch(`${API}/api/schema/relationships`).then(r => r.json())
-      .then(d => setRelationships(d.relationships || [])).catch(() => { });
+  const loadRelationships = async () => {
+    try {
+      const r = await fetch(`${API}/api/schema/relationships`);
+      const d = await r.json();
+      if (d.relationships && d.relationships.length > 0) {
+        setRelationships(d.relationships);
+      } else {
+        setAutoMapping(true);
+        const autoReq = await fetch(`${API}/api/schema/relationships/auto-map`, { method: "POST" });
+        const autoRes = await autoReq.json();
+        if (autoRes.relationships) {
+          setRelationships(autoRes.relationships);
+        }
+        setAutoMapping(false);
+      }
+    } catch {
+      setAutoMapping(false);
+    }
   };
-
-  useEffect(() => {
-    if (!srcDb) return;
-    fetch(`${API}/api/tables?db_filename=${srcDb}`).then(r => r.json()).then(d => {
-      setSrcTables(d.tables); if (d.tables[0]) setSrcTable(d.tables[0]);
-    }).catch(() => { });
-  }, [srcDb]);
-
-  useEffect(() => {
-    if (!tgtDb) return;
-    fetch(`${API}/api/tables?db_filename=${tgtDb}`).then(r => r.json()).then(d => {
-      setTgtTables(d.tables); if (d.tables[0]) setTgtTable(d.tables[0]);
-    }).catch(() => { });
-  }, [tgtDb]);
-
-  useEffect(() => {
-    if (!srcTable) return;
-    fetch(`${API}/api/tables/${srcTable}/columns?db_filename=${srcDb}`).then(r => r.json()).then(d => {
-      setSrcCols(d.columns); if (d.columns[0]) setSrcCol(d.columns[0].name);
-    }).catch(() => { });
-  }, [srcTable, srcDb]);
-
-  useEffect(() => {
-    if (!tgtTable) return;
-    fetch(`${API}/api/tables/${tgtTable}/columns?db_filename=${tgtDb}`).then(r => r.json()).then(d => {
-      setTgtCols(d.columns); if (d.columns[0]) setTgtCol(d.columns[0].name);
-    }).catch(() => { });
-  }, [tgtTable, tgtDb]);
-
-  const addRelationship = async () => {
-    if (!srcTable || !srcCol || !tgtTable || !tgtCol) return;
-    setSaving(true);
-    const res = await fetch(`${API}/api/schema/relationships`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        source_db: srcDb, source_table: srcTable, source_column: srcCol,
-        target_db: tgtDb, target_table: tgtTable, target_column: tgtCol, type: relType
-      })
-    });
-    if (res.ok) { setStatus("✅ Relationship added!"); loadRelationships(); }
-    else setStatus("❌ Failed to add relationship.");
-    setSaving(false); setTimeout(() => setStatus(""), 3000);
-  };
-
-  const clearAll = async () => {
-    await fetch(`${API}/api/schema/relationships`, { method: "DELETE" });
-    setRelationships([]); setStatus("✅ All cleared."); setTimeout(() => setStatus(""), 3000);
-  };
-
-  const deleteRelationship = async (index) => {
-    const res = await fetch(`${API}/api/schema/relationships/${index}`, { method: "DELETE" });
-    if (res.ok) { loadRelationships(); setStatus("✅ Removed."); setTimeout(() => setStatus(""), 2000); }
+  const forceAutoMap = async () => {
+    setAutoMapping(true);
+    setRelationships([]);
+    try {
+      const autoReq = await fetch(`${API}/api/schema/relationships/auto-map`, { method: "POST" });
+      const autoRes = await autoReq.json();
+      if (autoRes.relationships) {
+        setRelationships(autoRes.relationships);
+      }
+    } catch { }
+    setAutoMapping(false);
   };
 
   const [mapColumns, setMapColumns] = useState({});
@@ -1303,63 +1150,17 @@ function SchemaMapperTab() {
     <div style={{ padding: 24, display: "flex", flexDirection: "column", gap: 20 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div>
-          <h2 style={{ fontSize: 19, fontWeight: 700, color: C.text, letterSpacing: "-0.02em" }}>Star Schema & Relationship Mapper</h2>
-          <p style={{ color: C.muted, fontSize: 12, marginTop: 3 }}>Define FK/PK connections across tables to build your enterprise star schema.</p>
+          <h2 style={{ fontSize: 19, fontWeight: 700, color: C.text, letterSpacing: "-0.02em" }}>Relationship Viewer</h2>
+          <p style={{ color: C.muted, fontSize: 12, marginTop: 3 }}>View and define cross-database JOIN relationships...</p>
         </div>
-        {relationships.length > 0 && (
-          <div style={{ display: 'flex', gap: 8 }}>
-            <Btn variant="danger" onClick={clearAll} icon={Unlink}>Clear All</Btn>
-          </div>
+        {!autoMapping && (
+          <Btn variant="secondary" onClick={forceAutoMap} icon={RefreshCw}>
+            Scan for Changes
+          </Btn>
         )}
       </div>
 
-      <Card>
-        <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 16, display: "flex", gap: 8, alignItems: "center", color: C.text }}>
-          <Link size={15} color={C.accent} /> Define New Relationship
-        </h3>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 16, alignItems: "start" }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: C.yellow }}>SOURCE (Foreign Key)</div>
-            {[["Database", srcDb, setSrcDb, databases.map(d => ({ v: d, l: d }))],
-            ["Table", srcTable, setSrcTable, srcTables.map(t => ({ v: t, l: t }))],
-            ["Column (FK)", srcCol, setSrcCol, srcCols.map(c => ({ v: c.name, l: c.name }))]
-            ].map(([lbl, val, setter, opts]) => (
-              <div key={lbl}>
-                <label style={{ fontSize: 12, color: C.muted, display: "block", marginBottom: 4 }}>{lbl}</label>
-                <Select value={val} onChange={e => setter(e.target.value)}>
-                  {opts.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
-                </Select>
-              </div>
-            ))}
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, paddingTop: 28 }}>
-            <ArrowRight size={24} color={C.accent} />
-            <Select value={relType} onChange={e => setRelType(e.target.value)} style={{ width: 140, fontSize: 11 }}>
-              {["Many-to-One", "One-to-One", "Many-to-Many"].map(t => <option key={t} value={t}>{t}</option>)}
-            </Select>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: C.green }}>TARGET (Primary Key)</div>
-            {[["Database", tgtDb, setTgtDb, databases.map(d => ({ v: d, l: d }))],
-            ["Table", tgtTable, setTgtTable, tgtTables.map(t => ({ v: t, l: t }))],
-            ["Column (PK)", tgtCol, setTgtCol, tgtCols.map(c => ({ v: c.name, l: c.name }))]
-            ].map(([lbl, val, setter, opts]) => (
-              <div key={lbl}>
-                <label style={{ fontSize: 12, color: C.muted, display: "block", marginBottom: 4 }}>{lbl}</label>
-                <Select value={val} onChange={e => setter(e.target.value)}>
-                  {opts.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
-                </Select>
-              </div>
-            ))}
-          </div>
-        </div>
-        <div style={{ marginTop: 16, display: "flex", alignItems: "center", gap: 12 }}>
-          <Btn onClick={addRelationship} disabled={saving} icon={Plus}>
-            {saving ? <><Spinner size={13} /> Adding…</> : "Add Relationship"}
-          </Btn>
-          {status && <span style={{ fontSize: 13, color: C.green }}>{status}</span>}
-        </div>
-      </Card>
+
 
       {relationships.length > 0 && (
         <Card>
@@ -1375,17 +1176,6 @@ function SchemaMapperTab() {
                 <span style={{ color: C.green, fontFamily: "'IBM Plex Mono',monospace" }}>{rel.target_table}.{rel.target_column}</span>
                 <Badge color={C.purple}>{rel.type}</Badge>
                 <span style={{ fontSize: 11, color: C.muted, marginLeft: "auto" }}>{rel.source_db} → {rel.target_db}</span>
-                <button onClick={() => deleteRelationship(i)}
-                  title="Remove this relationship"
-                  style={{
-                    marginLeft: 8, padding: "4px 8px", borderRadius: 6, border: `1px solid ${C.red}30`,
-                    background: C.redDim, color: C.red, cursor: "pointer", fontSize: 11, fontWeight: 600,
-                    display: "flex", alignItems: "center", gap: 4, flexShrink: 0, transition: "all .15s"
-                  }}
-                  onMouseEnter={e => { e.currentTarget.style.background = C.red; e.currentTarget.style.color = "#fff"; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = C.redDim; e.currentTarget.style.color = C.red; }}>
-                  <Trash2 size={11} /> Remove
-                </button>
               </div>
             ))}
           </div>
@@ -1515,9 +1305,19 @@ function SchemaMapperTab() {
 
       {relationships.length === 0 && (
         <div style={{ textAlign: "center", padding: 60, color: C.muted }}>
-          <GitFork size={40} style={{ margin: "0 auto 16px", display: "block", opacity: .3 }} />
-          <p style={{ fontSize: 15 }}>No relationships defined yet.</p>
-          <p style={{ fontSize: 13, marginTop: 6 }}>Use the form above to connect tables across your databases.</p>
+          {autoMapping ? (
+            <>
+              <Spinner size={32} color={C.accent} style={{ display: "block", margin: "0 auto 16px" }} />
+              <p style={{ fontSize: 16, fontWeight: 600, color: C.accent }}>✨ AI is mapping your database schema...</p>
+              <p style={{ fontSize: 13, marginTop: 8 }}>Securely analyzing exact table footprints to build the Star Schema.</p>
+            </>
+          ) : (
+            <>
+              <GitFork size={40} style={{ margin: "0 auto 16px", display: "block", opacity: .3 }} />
+              <p style={{ fontSize: 15 }}>No relationships available.</p>
+              <p style={{ fontSize: 13, marginTop: 6 }}>The AI agent automatically maps relationships when tables are queried.</p>
+            </>
+          )}
         </div>
       )}
     </div>
@@ -1535,9 +1335,9 @@ function HybridSearchTab() {
 
   const EXAMPLES = [
     "What are the top 5 customers by revenue?",
-    "Show discount policy for orders over $1000",
+    "Show orders from the Technology category",
     "Which products have the highest profit margin?",
-    "What is the refund policy for premium customers?",
+    "Find all orders from California",
   ];
 
   const search = async (q = query) => {
@@ -1559,8 +1359,8 @@ function HybridSearchTab() {
     }
   };
 
-  const sqlOk   = result?.sql?.success && result?.sql?.rows?.length > 0;
-  const ragOk   = result?.rag?.success && result?.rag?.chunks?.length > 0;
+  const sqlOk = result?.sql?.success && result?.sql?.rows?.length > 0;
+  const kwOk  = result?.rag?.success && result?.rag?.blocks?.length > 0;
 
   return (
     <div style={{ padding: 28, display: "flex", flexDirection: "column", gap: 20, height: "100%", overflowY: "auto" }}>
@@ -1570,7 +1370,7 @@ function HybridSearchTab() {
           ⚡ Hybrid Search
         </h2>
         <p style={{ fontSize: 13, color: C.muted }}>
-          Simultaneously queries the SQL database <em>and</em> policy documents — results appear side-by-side.
+          Fires two parallel DB queries — an <em>analytical SELECT</em> (left) and a <em>keyword scan</em> across every table column (right).
         </p>
       </div>
 
@@ -1622,7 +1422,7 @@ function HybridSearchTab() {
             border: `3px solid ${C.border}`, borderTopColor: C.accent,
             borderRadius: "50%", animation: "spin 0.7s linear infinite"
           }} />
-          <p style={{ fontSize: 14 }}>Running SQL query + RAG search in parallel…</p>
+          <p style={{ fontSize: 14 }}>Running analytical SQL + keyword scan across all tables in parallel…</p>
         </div>
       )}
 
@@ -1742,7 +1542,7 @@ function HybridSearchTab() {
               )}
             </Card>
 
-            {/* RAG Panel */}
+            {/* Keyword Search Panel */}
             <Card style={{ padding: 0, overflow: "hidden" }}>
               <div style={{
                 padding: "12px 16px", borderBottom: `1px solid ${C.border}`,
@@ -1750,51 +1550,94 @@ function HybridSearchTab() {
                 background: `${C.yellowDim || C.accentDim}`,
               }}>
                 <BookOpen size={14} color={C.yellow || C.accent} />
-                <span style={{ fontSize: 13, fontWeight: 700, color: C.yellow || C.accent }}>Document Context</span>
-                {ragOk && (
+                <span style={{ fontSize: 13, fontWeight: 700, color: C.yellow || C.accent }}>RAG Search</span>
+                {kwOk && (
                   <span style={{
                     fontSize: 10, background: (C.yellow || C.accent) + "22",
                     color: C.yellow || C.accent, border: `1px solid ${(C.yellow || C.accent)}40`,
-                    borderRadius: 20, padding: "2px 8px", fontWeight: 700
+                    borderRadius: 20, padding: "2px 8px", fontWeight: 700,
                   }}>
-                    {result.rag.chunks.length} chunks
+                    {result.rag.blocks.length} table{result.rag.blocks.length !== 1 ? "s" : ""}
+                  </span>
+                )}
+                {result?.rag?.keywords?.length > 0 && (
+                  <span style={{ fontSize: 10, color: C.muted, marginLeft: "auto" }}>
+                    terms: {result.rag.keywords.slice(0, 4).join(", ")}
                   </span>
                 )}
               </div>
 
-              {result.rag.error && (
+              {result.rag?.error && (
                 <div style={{ padding: 16, color: C.red, fontSize: 12 }}>⚠ {result.rag.error}</div>
               )}
 
-              {ragOk ? (
-                <div style={{ display: "flex", flexDirection: "column", gap: 0, maxHeight: 460, overflowY: "auto" }}>
-                  {result.rag.chunks.map((chunk, i) => (
-                    <div key={i} style={{
-                      padding: "12px 16px",
-                      borderBottom: `1px solid ${C.borderSoft}`,
-                      transition: "background .15s",
-                    }}
-                      onMouseEnter={e => e.currentTarget.style.background = C.hover}
-                      onMouseLeave={e => e.currentTarget.style.background = "transparent"}
-                    >
+              {kwOk ? (
+                <div style={{ display: "flex", flexDirection: "column", maxHeight: 460, overflowY: "auto" }}>
+                  {result.rag.blocks.map((block, bi) => (
+                    <div key={bi}>
+                      {/* Table header */}
                       <div style={{
-                        display: "inline-block", fontSize: 9, fontWeight: 700,
-                        color: C.yellow || C.accent, background: (C.yellow || C.accent) + "12",
-                        border: `1px solid ${(C.yellow || C.accent)}30`,
-                        borderRadius: 6, padding: "2px 8px", marginBottom: 6,
-                        fontFamily: "'IBM Plex Mono',monospace", letterSpacing: "0.06em",
+                        padding: "7px 16px",
+                        background: C.surface,
+                        borderBottom: `1px solid ${C.border}`,
+                        display: "flex", alignItems: "center", gap: 8,
                       }}>
-                        📄 {chunk.source}
+                        <Database size={11} color={C.muted} />
+                        <span style={{ fontSize: 11, fontWeight: 700, fontFamily: "'IBM Plex Mono',monospace", color: C.textSoft }}>
+                          {block.table}
+                        </span>
+                        <span style={{
+                          fontSize: 9, fontWeight: 700,
+                          color: C.yellow || C.accent,
+                          background: (C.yellow || C.accent) + "15",
+                          border: `1px solid ${(C.yellow || C.accent)}30`,
+                          borderRadius: 4, padding: "1px 6px",
+                          fontFamily: "'IBM Plex Mono',monospace",
+                        }}>
+                          matches "{block.matched_keyword}"
+                        </span>
+                        <span style={{ fontSize: 10, color: C.muted, marginLeft: "auto" }}>
+                          {block.rows.length} row{block.rows.length !== 1 ? "s" : ""}
+                        </span>
                       </div>
-                      <p style={{ fontSize: 12.5, color: C.text, lineHeight: 1.7, margin: 0 }}>
-                        {chunk.content}
-                      </p>
+                      {/* Mini table */}
+                      <div style={{ overflowX: "auto" }}>
+                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                          <thead>
+                            <tr style={{ background: C.bg }}>
+                              {block.columns.slice(0, 6).map(col => (
+                                <th key={col} style={{
+                                  padding: "5px 10px", textAlign: "left", color: C.muted,
+                                  fontWeight: 600, borderBottom: `1px solid ${C.border}`,
+                                  fontFamily: "'IBM Plex Mono',monospace", whiteSpace: "nowrap",
+                                }}>{col}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {block.rows.slice(0, 8).map((row, ri) => (
+                              <tr key={ri} style={{ borderBottom: `1px solid ${C.borderSoft}` }}
+                                onMouseEnter={e => e.currentTarget.style.background = C.hover}
+                                onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                              >
+                                {block.columns.slice(0, 6).map(col => (
+                                  <td key={col} style={{ padding: "5px 10px", color: C.text, whiteSpace: "nowrap" }}>
+                                    {typeof row[col] === "number"
+                                      ? (Number.isInteger(row[col]) ? row[col].toLocaleString() : row[col].toFixed(2))
+                                      : String(row[col] ?? "")}
+                                  </td>
+                                ))}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
                   ))}
                 </div>
-              ) : !result.rag.error && (
+              ) : !result.rag?.error && (
                 <div style={{ padding: 32, textAlign: "center", color: C.muted, fontSize: 13 }}>
-                  No relevant policy documents found.
+                  No keyword matches found in the database.
                 </div>
               )}
             </Card>
@@ -1808,7 +1651,7 @@ function HybridSearchTab() {
         <div style={{ textAlign: "center", padding: 80, color: C.muted }}>
           <Activity size={44} style={{ margin: "0 auto 16px", display: "block", opacity: .25 }} />
           <p style={{ fontSize: 15, fontWeight: 600 }}>Hybrid Search ready</p>
-          <p style={{ fontSize: 13, marginTop: 6 }}>Type a question above to query both the database and your documents simultaneously.</p>
+          <p style={{ fontSize: 13, marginTop: 6 }}>Type a question above to run both an analytical query AND a keyword scan across all database tables.</p>
         </div>
       )}
     </div>
@@ -1819,9 +1662,9 @@ const TABS = [
   { id: "chat",      label: "AI Assistant",  icon: MessageSquare },
   { id: "hybrid",    label: "Hybrid Search", icon: Activity },
   { id: "data",      label: "Data Explorer", icon: Database },
-  { id: "dashboard", label: "Dashboard",     icon: BarChart2 },
+  { id: "reports",   label: "AI Reports",    icon: FileText },
   { id: "policy",    label: "Policy Hub",    icon: BookOpen },
-  { id: "schema",    label: "Schema Mapper", icon: GitFork },
+  { id: "schema",    label: "Relationship Viewer", icon: GitFork },
   { id: "settings",  label: "Settings",      icon: Settings },
 ];
 
@@ -1886,19 +1729,6 @@ function MainApp() {
                   <div style={{ fontSize: 9, color: C.muted, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", marginTop: 1 }}>Enterprise AI</div>
                 </div>
               </div>
-              {/* Home button */}
-              <button onClick={() => navigate("/")} title="Back to Home"
-                style={{
-                  background: "none", border: `1px solid ${C.border}`, borderRadius: 7,
-                  color: C.muted, cursor: "pointer", padding: "4px 8px", fontSize: 11,
-                  fontFamily: "'Plus Jakarta Sans',sans-serif", transition: "all .15s",
-                  display: "flex", alignItems: "center", gap: 4,
-                }}
-                onMouseEnter={e => { e.currentTarget.style.borderColor = C.accent; e.currentTarget.style.color = C.accent; }}
-                onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.color = C.muted; }}
-              >
-                ← Home
-              </button>
             </div>
           </div>
 
@@ -1981,13 +1811,13 @@ function MainApp() {
               </span>
             </div>
           )}
-          {activeTab === "chat"     && <ChatTab />}
-          {activeTab === "hybrid"   && <HybridSearchTab />}
-          {activeTab === "data"     && <DataExplorerTab activeDb={activeDb} />}
-          {activeTab === "dashboard"&& <DashboardTab />}
-          {activeTab === "policy"   && <PolicyTab />}
-          {activeTab === "schema"   && <SchemaMapperTab />}
-          {activeTab === "settings" && <SettingsTab activeDb={activeDb} setActiveDb={setActiveDb} />}
+          <div style={{ display: activeTab === "chat" ? "block" : "none", height: "100%" }}><ChatTab /></div>
+          <div style={{ display: activeTab === "hybrid" ? "block" : "none", height: "100%" }}><HybridSearchTab /></div>
+          <div style={{ display: activeTab === "data" ? "block" : "none", height: "100%" }}><DataExplorerTab activeDb={activeDb} /></div>
+          <div style={{ display: activeTab === "reports" ? "block" : "none", height: "100%" }}><ReportsTab /></div>
+          <div style={{ display: activeTab === "policy" ? "block" : "none", height: "100%" }}><PolicyTab /></div>
+          <div style={{ display: activeTab === "schema" ? "block" : "none", height: "100%" }}><SchemaMapperTab /></div>
+          <div style={{ display: activeTab === "settings" ? "block" : "none", height: "100%" }}><SettingsTab activeDb={activeDb} setActiveDb={setActiveDb} /></div>
         </div>
       </div>
     </ThemeCtx.Provider>
