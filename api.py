@@ -626,23 +626,44 @@ def get_relationships():
 
 @app.post("/api/schema/relationships/auto-map")
 def auto_map_relationships():
-    from tools.sql_tool import get_schema
+    from tools.sql_tool import get_schema, get_engine
     from agent import llm
-    
-    schema = get_schema()
-    prompt = f"""
-You are an expert Database Architect. Analyze the following SQLite database schema and identify ALL logical Foreign Key to Primary Key relationships that form the Star Schema.
-Return ONLY a valid JSON array of objects, with NO markdown formatting or extra text.
-Each object MUST have exactly these exact keys:
-"source_db" (string: usually 'sales_normalized_1_1.db')
-"source_table" (string: the table with the foreign key, e.g., 'orders' or 'sales')
-"source_column" (string: the foreign key column)
-"target_db" (string: usually 'sales_normalized_1_1.db')
-"target_table" (string: the table with the primary key, e.g., 'customers' or 'products')
-"target_column" (string: the primary key column)
-"type" (string: MUST BE "Many-to-One", "One-to-One", or "One-to-Many")
+    import sqlalchemy
 
-Strictly map every dimension table to the central fact table.
+    # ── Bust the schema cache so newly-added tables are picked up ──
+    import tools.sql_tool as sql_mod
+    sql_mod._schema_cache = None
+
+    schema = get_schema()
+
+    # Derive the active DB filename dynamically
+    engine = get_engine()
+    try:
+        db_filename = os.path.basename(str(engine.url.database))
+    except Exception:
+        db_filename = "database.db"
+
+    prompt = f"""
+You are an expert Database Architect. Analyze the following database schema and identify ALL logical
+Foreign Key → Primary Key relationships between tables.
+
+Return ONLY a valid JSON array of relationship objects — no markdown, no extra text.
+Each object MUST have EXACTLY these keys:
+  "source_db"     (string: the active database filename, e.g. "{db_filename}")
+  "source_table"  (string: the table that holds the foreign key)
+  "source_column" (string: the foreign key column name)
+  "target_db"     (string: the active database filename, e.g. "{db_filename}")
+  "target_table"  (string: the referenced table)
+  "target_column" (string: the referenced primary key column)
+  "type"          (string: exactly one of "Many-to-One", "One-to-One", or "One-to-Many")
+
+Rules:
+- Include ALL tables shown in the schema, not just the core sales tables.
+- If a column name ends in _id and a matching table exists, treat it as a FK.
+- Use the PRAGMA FK information when present.
+- Do NOT invent relationships that are not supported by the schema.
+
+ACTIVE DB: {db_filename}
 
 SCHEMA:
 {schema}
@@ -650,13 +671,33 @@ SCHEMA:
     try:
         res = llm.invoke(prompt)
         text = res.content.replace("```json", "").replace("```", "").strip()
-        rels = json.loads(text)
-        if isinstance(rels, list):
-            meta = {"relationships": rels}
-            with open(METADATA_PATH, "w") as f:
-                json.dump(meta, f, indent=4)
-            return {"success": True, "relationships": rels}
-        return {"success": False, "error": "LLM did not return a list"}
+        new_rels = json.loads(text)
+        if not isinstance(new_rels, list):
+            return {"success": False, "error": "LLM did not return a list"}
+
+        # ── Merge: load existing, append new ones that aren’t already present ──
+        existing = []
+        if METADATA_PATH.exists():
+            with open(METADATA_PATH) as f:
+                existing = json.load(f).get("relationships", [])
+
+        def rel_key(r):
+            return (r.get("source_table"), r.get("source_column"),
+                    r.get("target_table"), r.get("target_column"))
+
+        existing_keys = {rel_key(r) for r in existing}
+        added = []
+        for r in new_rels:
+            if rel_key(r) not in existing_keys:
+                existing.append(r)
+                existing_keys.add(rel_key(r))
+                added.append(r)
+
+        meta = {"relationships": existing}
+        with open(METADATA_PATH, "w") as f:
+            json.dump(meta, f, indent=4)
+
+        return {"success": True, "relationships": existing, "added": len(added)}
     except Exception as e:
         print("Auto-map failed:", e)
         return {"success": False, "error": str(e)}

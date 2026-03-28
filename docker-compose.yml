@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: data-analyst-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      # Optional: Add any secret keys here (or ideally load from .env)
+      - PORT=8000
+    volumes:
+      # Mount data folder so SQLite database survives container restarts
+      - ./data:/app/data
+      - ./docs:/app/docs
+    networks:
+      - analyst-net
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.frontend
+      args:
+        # Use an empty string so the Nginx proxy handles the routing locally
+        - REACT_APP_API_URL=""
+    container_name: data-analyst-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - analyst-net
+
+networks:
+  analyst-net:
+    driver: bridge

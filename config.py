@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 # 1. LOAD ENVIRONMENT VARIABLES
 # ═══════════════════════════════════════════════════════════════
 
-BASE_DIR = Path("C:/SEM5/SYS_project")   # ← update if your project root changes
+BASE_DIR = Path(__file__).parent.resolve()
 load_dotenv(dotenv_path=BASE_DIR / ".env")
 
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")

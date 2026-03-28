@@ -1,0 +1,26 @@
+# Backend Dockerfile for Enterprise Data Analyst
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# System dependencies for pandas and sqlite
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    libsqlite3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy backend source code
+COPY . .
+
+# Environment vars (will be overridden by docker-compose)
+ENV PYTHONPATH=/app
+ENV PORT=8000
+
+# Open port
+EXPOSE 8000
+
+# Start FastAPI server
+CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000"]

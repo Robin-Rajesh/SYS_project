@@ -1,6 +1,35 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 
+// ── Auth helpers (used by App.js too via localStorage) ──────────
+export const AUTH_KEY = "da_auth_session";
+
+export function setAuthSession(user) {
+  localStorage.setItem(AUTH_KEY, JSON.stringify({
+    user,
+    loggedInAt: Date.now(),
+  }));
+}
+
+export function getAuthSession() {
+  try {
+    const raw = localStorage.getItem(AUTH_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function clearAuthSession() {
+  localStorage.removeItem(AUTH_KEY);
+}
+
+// ── Demo credentials ─────────────────────────────────────────────
+const VALID_USERS = [
+  { email: "admin@demo.com", password: "admin123", name: "Admin" },
+  { email: "demo@demo.com",  password: "demo",     name: "Demo User" },
+];
+
 // ── Animated background ─────────────────────────────────────────
 function LoginBG() {
   return (
@@ -9,7 +38,6 @@ function LoginBG() {
         position: "absolute", inset: 0,
         background: "linear-gradient(135deg, #050810 0%, #080d1a 50%, #050810 100%)"
       }} />
-      {/* Glowing blobs */}
       <div style={{
         position: "absolute", width: 800, height: 800, borderRadius: "50%", top: "-20%", left: "-20%",
         background: "radial-gradient(circle, rgba(37,99,235,0.12) 0%, transparent 70%)",
@@ -25,7 +53,6 @@ function LoginBG() {
         background: "radial-gradient(circle, rgba(45,212,191,0.07) 0%, transparent 70%)",
         filter: "blur(30px)", animation: "blobFloat2 12s ease-in-out 2s infinite alternate",
       }} />
-      {/* Subtle grid */}
       <div style={{
         position: "absolute", inset: 0,
         backgroundImage: `linear-gradient(rgba(79,158,255,0.035) 1px, transparent 1px),
@@ -38,24 +65,34 @@ function LoginBG() {
         @keyframes loginSlide { from{opacity:0;transform:translateY(24px)} to{opacity:1;transform:translateY(0)} }
         @keyframes spin { to{transform:rotate(360deg)} }
         @keyframes glow { 0%,100%{box-shadow:0 0 20px rgba(37,99,235,0.3)} 50%{box-shadow:0 0 50px rgba(37,99,235,0.6)} }
+        @keyframes shake {
+          0%,100%{transform:translateX(0)}
+          15%{transform:translateX(-7px)}
+          30%{transform:translateX(7px)}
+          45%{transform:translateX(-5px)}
+          60%{transform:translateX(5px)}
+          75%{transform:translateX(-3px)}
+          90%{transform:translateX(3px)}
+        }
         @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap');
         * { box-sizing:border-box; margin:0; padding:0; }
         body { font-family:'Plus Jakarta Sans',sans-serif; background:#050810; }
         input:-webkit-autofill { -webkit-box-shadow:0 0 0 1000px #0d1117 inset !important; -webkit-text-fill-color:#cdd9e5 !important; }
+        ::placeholder { color: rgba(255,255,255,0.25) !important; }
       `}</style>
     </div>
   );
 }
 
 // ── Input component ─────────────────────────────────────────────
-function LInput({ type = "text", placeholder, value, onChange, icon }) {
+function LInput({ type = "text", placeholder, value, onChange, icon, onKeyDown }) {
   const [focused, setFocused] = useState(false);
   return (
     <div style={{ position: "relative", width: "100%" }}>
       {icon && (
         <span style={{
           position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)",
-          fontSize: 16, pointerEvents: "none", zIndex: 1, opacity: focused ? 1 : 0.5,
+          fontSize: 16, pointerEvents: "none", zIndex: 1, opacity: focused ? 1 : 0.4,
           transition: "opacity 0.2s",
         }}>{icon}</span>
       )}
@@ -64,6 +101,7 @@ function LInput({ type = "text", placeholder, value, onChange, icon }) {
         placeholder={placeholder}
         value={value}
         onChange={onChange}
+        onKeyDown={onKeyDown}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
         style={{
@@ -91,30 +129,50 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [shake, setShake] = useState(false);
 
-  const handleLogin = async (e) => {
-    e.preventDefault();
-    if (!email.trim() || !password.trim()) {
-      setError("Please enter your email and password.");
-      return;
-    }
-    setLoading(true); setError("");
-
-    // Simulate auth check — accept any non-empty credentials (demo mode)
-    await new Promise(r => setTimeout(r, 1200));
-
-    // Demo: accept any input, or check for specific creds:
-    // if (email === "admin@example.com" && password === "admin123")
-    setLoading(false);
-    navigate("/app");
-  };
-
   const triggerShake = () => {
     setShake(true);
     setTimeout(() => setShake(false), 500);
   };
 
+  const handleLogin = async (e) => {
+    e?.preventDefault();
+
+    if (!email.trim() || !password.trim()) {
+      setError("Please enter your email and password.");
+      triggerShake();
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+
+    // Simulate network latency
+    await new Promise(r => setTimeout(r, 900));
+
+    const matched = VALID_USERS.find(
+      u => u.email.toLowerCase() === email.trim().toLowerCase() && u.password === password
+    );
+
+    if (matched) {
+      setAuthSession({ email: matched.email, name: matched.name });
+      navigate("/app", { replace: true });
+    } else {
+      setLoading(false);
+      setError("Incorrect email or password. Check the credentials below.");
+      triggerShake();
+    }
+  };
+
+  const handleDemoLogin = () => {
+    setAuthSession({ email: "demo@demo.com", name: "Demo User" });
+    navigate("/app", { replace: true });
+  };
+
   return (
-    <div style={{ position: "relative", minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+    <div style={{
+      position: "relative", minHeight: "100vh",
+      display: "flex", alignItems: "center", justifyContent: "center", padding: 24
+    }}>
       <LoginBG />
 
       {/* Back to home */}
@@ -140,8 +198,7 @@ export default function LoginPage() {
         borderRadius: 24, backdropFilter: "blur(30px)",
         boxShadow: "0 32px 80px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.05) inset",
         padding: 44,
-        animation: "loginSlide 0.5s ease both",
-        ...(shake ? { animation: "loginSlide 0.5s ease both, shake 0.4s ease" } : {}),
+        animation: shake ? "shake 0.4s ease" : "loginSlide 0.5s ease both",
       }}>
         {/* Logo */}
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 36 }}>
@@ -173,12 +230,12 @@ export default function LoginPage() {
         {/* Form */}
         <form onSubmit={handleLogin} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <div>
-            <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#8b949e", marginBottom: 8, letterSpacing: "0.02em" }}>
+            <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#8b949e", marginBottom: 8, letterSpacing: "0.04em" }}>
               EMAIL ADDRESS
             </label>
             <LInput
               type="email"
-              placeholder="you@company.com"
+              placeholder="admin@demo.com"
               value={email}
               onChange={e => { setEmail(e.target.value); setError(""); }}
               icon="✉"
@@ -187,7 +244,7 @@ export default function LoginPage() {
 
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-              <label style={{ fontSize: 12, fontWeight: 600, color: "#8b949e", letterSpacing: "0.02em" }}>
+              <label style={{ fontSize: 12, fontWeight: 600, color: "#8b949e", letterSpacing: "0.04em" }}>
                 PASSWORD
               </label>
               <span style={{ fontSize: 11, color: "#4f9eff", cursor: "pointer" }}>Forgot password?</span>
@@ -215,26 +272,32 @@ export default function LoginPage() {
             <span style={{ fontSize: 13, color: "#8b949e" }}>Remember me for 30 days</span>
           </label>
 
-          {/* Error */}
+          {/* Error banner */}
           {error && (
             <div style={{
               padding: "10px 14px", borderRadius: 10,
               background: "rgba(229,83,75,0.1)", border: "1px solid rgba(229,83,75,0.3)",
               fontSize: 13, color: "#e5534b",
-            }}>⚠ {error}</div>
+              display: "flex", alignItems: "flex-start", gap: 8,
+              animation: "loginSlide 0.2s ease",
+            }}>
+              <span style={{ flexShrink: 0 }}>⚠</span>
+              <span>{error}</span>
+            </div>
           )}
 
           {/* Submit */}
           <button type="submit" disabled={loading} style={{
-            width: "100%", padding: "14px 0", borderRadius: 12, marginTop: 8,
+            width: "100%", padding: "14px 0", borderRadius: 12, marginTop: 4,
             background: loading ? "rgba(37,99,235,0.4)" : "linear-gradient(135deg, #2563eb, #7c3aed)",
-            border: "none", color: "#fff", fontSize: 15, fontWeight: 700, cursor: loading ? "not-allowed" : "pointer",
+            border: "none", color: "#fff", fontSize: 15, fontWeight: 700,
+            cursor: loading ? "not-allowed" : "pointer",
             boxShadow: loading ? "none" : "0 6px 30px rgba(37,99,235,0.4)",
             transition: "all 0.25s", display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
             fontFamily: "'Plus Jakarta Sans',sans-serif",
           }}
-            onMouseEnter={e => { if(!loading) { e.currentTarget.style.transform = "translateY(-1px)"; e.currentTarget.style.boxShadow = "0 10px 40px rgba(37,99,235,0.55)"; }}}
-            onMouseLeave={e => { e.currentTarget.style.transform = "translateY(0)"; e.currentTarget.style.boxShadow = "0 6px 30px rgba(37,99,235,0.4)"; }}
+            onMouseEnter={e => { if (!loading) { e.currentTarget.style.transform = "translateY(-1px)"; e.currentTarget.style.boxShadow = "0 10px 40px rgba(37,99,235,0.55)"; } }}
+            onMouseLeave={e => { e.currentTarget.style.transform = "translateY(0)"; e.currentTarget.style.boxShadow = loading ? "none" : "0 6px 30px rgba(37,99,235,0.4)"; }}
           >
             {loading ? (
               <>
@@ -255,8 +318,8 @@ export default function LoginPage() {
           <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,0.07)" }} />
         </div>
 
-        {/* SSO-style demo buttons */}
-        <button onClick={() => navigate("/app")} style={{
+        {/* Demo access */}
+        <button onClick={handleDemoLogin} style={{
           width: "100%", padding: "12px 0", borderRadius: 12,
           background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)",
           color: "#8b949e", fontSize: 13, fontWeight: 600, cursor: "pointer", transition: "all 0.2s",
@@ -268,7 +331,7 @@ export default function LoginPage() {
           ⚡ Continue as Demo User
         </button>
 
-        <p style={{ textAlign: "center", fontSize: 12, color: "#545d68", marginTop: 28 }}>
+        <p style={{ textAlign: "center", fontSize: 12, color: "#545d68", marginTop: 22 }}>
           By continuing, you agree to our{" "}
           <span style={{ color: "#4f9eff", cursor: "pointer" }}>Privacy Policy</span>
         </p>

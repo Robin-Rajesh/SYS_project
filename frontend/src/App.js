@@ -1,19 +1,19 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import LandingPage from "./LandingPage";
-import LoginPage from "./LoginPage";
+import LoginPage, { getAuthSession, clearAuthSession } from "./LoginPage";
 import {
   MessageSquare, Database, BarChart2, BookOpen, Settings,
   Send, Trash2, RefreshCw, Download, Mail, Upload,
   Zap, Activity, Filter, SortAsc, SortDesc, ArrowRight, Bot, User,
   GitFork, Link, Unlink, CheckCircle, AlertCircle, TrendingUp, Plus, Sun, Moon,
-  Maximize2, Minimize2, ZoomIn, ZoomOut, Eye, EyeOff, FileText
+  Maximize2, Minimize2, ZoomIn, ZoomOut, Eye, EyeOff, FileText, LogOut
 } from "lucide-react";
 import Plot from "react-plotly.js";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-const API = "http://localhost:8000";
+const API = process.env.REACT_APP_API_URL || "http://localhost:8000";
 
 // ─── THEME PALETTES ───────────────────────────────────────────
 const DARK = {
@@ -26,13 +26,13 @@ const DARK = {
   hover: "#131920", sidebarBg: "#090d13",
 };
 const LIGHT = {
-  bg: "#f4f6fa", surface: "#ffffff", card: "#ffffff", cardRaised: "#f9fafb",
-  border: "#dde3ec", borderSoft: "#e8edf4", accent: "#2563eb",
-  accentGlow: "rgba(37,99,235,0.10)", accentDim: "#dbeafe",
-  green: "#059669", greenDim: "#d1fae5", yellow: "#b45309", yellowDim: "#fef3c7",
+  bg: "#f0f2f8", surface: "#ffffff", card: "#ffffff", cardRaised: "#f5f7ff",
+  border: "#d0d8f0", borderSoft: "#dde3f5", accent: "#4361ee",
+  accentGlow: "rgba(67,97,238,0.14)", accentDim: "#e0e7ff",
+  green: "#059669", greenDim: "#d1fae5", yellow: "#d97706", yellowDim: "#fef3c7",
   red: "#dc2626", redDim: "#fee2e2", purple: "#7c3aed", purpleDim: "#ede9fe",
-  teal: "#0d9488", text: "#111827", textSoft: "#4b5563", muted: "#9ca3af",
-  hover: "#f3f4f6", sidebarBg: "#eef1f7",
+  teal: "#0891b2", text: "#0f172a", textSoft: "#475569", muted: "#94a3b8",
+  hover: "#eef1fb", sidebarBg: "#e8ecf8",
 };
 
 // Proxy — reads window.__theme at access time so all components always get live colors
@@ -1668,13 +1668,109 @@ const TABS = [
   { id: "settings",  label: "Settings",      icon: Settings },
 ];
 
+// ─── USER PILL (topbar) ───────────────────────────────────
+function UserPill({ sessionUser, onSignOut }) {
+  const [open, setOpen] = React.useState(false);
+  const ref = React.useRef();
+  React.useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const initial = (sessionUser.name || sessionUser.email || "U")[0].toUpperCase();
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{
+          display: "flex", alignItems: "center", gap: 8,
+          padding: "5px 10px 5px 5px",
+          borderRadius: 40, border: `1px solid ${C.border}`,
+          background: C.cardRaised, cursor: "pointer",
+          transition: "all .15s",
+          boxShadow: open ? `0 0 0 3px ${C.accentGlow}` : "none",
+        }}
+        onMouseEnter={e => { e.currentTarget.style.borderColor = C.accent; e.currentTarget.style.boxShadow = `0 0 0 3px ${C.accentGlow}`; }}
+        onMouseLeave={e => { if (!open) { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.boxShadow = "none"; } }}
+      >
+        {/* Avatar circle */}
+        <div style={{
+          width: 28, height: 28, borderRadius: "50%",
+          background: `linear-gradient(135deg, ${C.accent}, ${C.purple})`,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: 12, fontWeight: 700, color: "#fff", flexShrink: 0,
+        }}>{initial}</div>
+        <span style={{ fontSize: 12, fontWeight: 600, color: C.text, whiteSpace: "nowrap" }}>
+          {sessionUser.name || "User"}
+        </span>
+        <span style={{ fontSize: 10, color: C.muted, marginLeft: 2 }}>{open ? "▲" : "▾"}</span>
+      </button>
+
+      {/* Dropdown */}
+      {open && (
+        <div style={{
+          position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 999,
+          background: C.surface, border: `1px solid ${C.border}`,
+          borderRadius: 12, padding: 6, minWidth: 200,
+          boxShadow: "0 8px 32px rgba(0,0,0,0.14)",
+          animation: "slideIn .15s ease",
+        }}>
+          {/* User info */}
+          <div style={{
+            padding: "10px 12px 10px",
+            borderBottom: `1px solid ${C.borderSoft}`, marginBottom: 4,
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{
+                width: 36, height: 36, borderRadius: "50%",
+                background: `linear-gradient(135deg, ${C.accent}, ${C.purple})`,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 15, fontWeight: 700, color: "#fff", flexShrink: 0,
+              }}>{initial}</div>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{sessionUser.name || "User"}</div>
+                <div style={{ fontSize: 11, color: C.muted, fontFamily: "'IBM Plex Mono',monospace", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {sessionUser.email || ""}
+                </div>
+              </div>
+            </div>
+          </div>
+          {/* Sign out */}
+          <button onClick={onSignOut} style={{
+            display: "flex", alignItems: "center", gap: 8, width: "100%",
+            padding: "8px 12px", borderRadius: 8, border: "none",
+            background: "transparent", color: C.red, fontSize: 12, fontWeight: 600,
+            cursor: "pointer", transition: "background .15s",
+          }}
+            onMouseEnter={e => { e.currentTarget.style.background = C.redDim; }}
+            onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
+          >
+            <LogOut size={13} /> Sign Out
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── PROTECTED ROUTE ──────────────────────────────────────────
+function ProtectedRoute({ children }) {
+  const session = getAuthSession();
+  if (!session) {
+    return <Navigate to="/login" replace />;
+  }
+  return children;
+}
+
 // ─── ROUTER ROOT ──────────────────────────────────────────────
 export default function App() {
   return (
     <Routes>
       <Route path="/" element={<LandingPage />} />
       <Route path="/login" element={<LoginPage />} />
-      <Route path="/app" element={<MainApp />} />
+      <Route path="/app" element={<ProtectedRoute><MainApp /></ProtectedRoute>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
@@ -1686,6 +1782,8 @@ function MainApp() {
   const [activeDb, setActiveDb] = useState("");
   const [apiOk, setApiOk] = useState(null);
   const [theme, setTheme] = useState("dark");
+  const session = getAuthSession();
+  const sessionUser = session?.user || {};
 
   window.__theme = theme;
   const toggle = () => setTheme(t => t === "dark" ? "light" : "dark");
@@ -1713,7 +1811,7 @@ function MainApp() {
           }} />
 
           {/* Logo */}
-          <div style={{ padding: "22px 18px 18px" }}>
+          <div style={{ padding: "22px 18px 14px" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <div style={{
@@ -1768,7 +1866,7 @@ function MainApp() {
                 display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "7px 10px",
                 borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface,
                 color: C.textSoft, fontSize: 12, fontWeight: 500, cursor: "pointer",
-                marginBottom: 10, transition: "all .15s"
+                marginBottom: 8, transition: "all .15s"
               }}
               onMouseEnter={e => { e.currentTarget.style.borderColor = C.accent; e.currentTarget.style.color = C.text; }}
               onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.color = C.textSoft; }}>
@@ -1794,30 +1892,49 @@ function MainApp() {
         </div>
 
         {/* Main */}
-        <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", background: C.bg }}>
-          {apiOk === false && (
-            <div style={{
-              background: `${C.red}18`, borderBottom: `1px solid ${C.red}30`,
-              padding: "10px 20px", display: "flex", alignItems: "center", gap: 10, flexShrink: 0
-            }}>
-              <AlertCircle size={14} color={C.red} />
-              <span style={{ fontSize: 12, color: C.red }}>
-                API offline — run: <code style={{
-                  marginLeft: 8, fontFamily: "'IBM Plex Mono',monospace",
-                  background: C.redDim, padding: "2px 8px", borderRadius: 4, fontSize: 11
-                }}>
-                  uvicorn api:app --reload --port 8000
-                </code>
+        <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column", background: C.bg }}>
+
+          {/* Top bar */}
+          <div style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+            padding: "0 24px", height: 52, flexShrink: 0,
+            background: C.surface,
+            borderBottom: `1px solid ${C.borderSoft}`,
+            boxShadow: `0 1px 0 ${C.borderSoft}`,
+          }}>
+            {/* Left — current tab label */}
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: C.text, letterSpacing: "-0.01em" }}>
+                {TABS.find(t => t.id === activeTab)?.label || "Dashboard"}
               </span>
+              {apiOk === false && (
+                <div style={{
+                  display: "flex", alignItems: "center", gap: 5,
+                  background: `${C.red}14`, border: `1px solid ${C.red}30`,
+                  borderRadius: 6, padding: "3px 10px",
+                }}>
+                  <AlertCircle size={11} color={C.red} />
+                  <span style={{ fontSize: 11, color: C.red, fontFamily: "'IBM Plex Mono',monospace" }}>
+                    API offline
+                  </span>
+                </div>
+              )}
             </div>
-          )}
-          <div style={{ display: activeTab === "chat" ? "block" : "none", height: "100%" }}><ChatTab /></div>
-          <div style={{ display: activeTab === "hybrid" ? "block" : "none", height: "100%" }}><HybridSearchTab /></div>
-          <div style={{ display: activeTab === "data" ? "block" : "none", height: "100%" }}><DataExplorerTab activeDb={activeDb} /></div>
-          <div style={{ display: activeTab === "reports" ? "block" : "none", height: "100%" }}><ReportsTab /></div>
-          <div style={{ display: activeTab === "policy" ? "block" : "none", height: "100%" }}><PolicyTab /></div>
-          <div style={{ display: activeTab === "schema" ? "block" : "none", height: "100%" }}><SchemaMapperTab /></div>
-          <div style={{ display: activeTab === "settings" ? "block" : "none", height: "100%" }}><SettingsTab activeDb={activeDb} setActiveDb={setActiveDb} /></div>
+
+            {/* Right — user account pill */}
+            <UserPill sessionUser={sessionUser} onSignOut={() => { clearAuthSession(); navigate("/login"); }} />
+          </div>
+
+          {/* Tab panels */}
+          <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column" }}>
+            <div style={{ display: activeTab === "chat" ? "flex" : "none", height: "100%", flexDirection: "column" }}><ChatTab /></div>
+            <div style={{ display: activeTab === "hybrid" ? "block" : "none", height: "100%" }}><HybridSearchTab /></div>
+            <div style={{ display: activeTab === "data" ? "block" : "none", height: "100%" }}><DataExplorerTab activeDb={activeDb} /></div>
+            <div style={{ display: activeTab === "reports" ? "block" : "none", height: "100%" }}><ReportsTab /></div>
+            <div style={{ display: activeTab === "policy" ? "block" : "none", height: "100%" }}><PolicyTab /></div>
+            <div style={{ display: activeTab === "schema" ? "block" : "none", height: "100%" }}><SchemaMapperTab /></div>
+            <div style={{ display: activeTab === "settings" ? "block" : "none", height: "100%" }}><SettingsTab activeDb={activeDb} setActiveDb={setActiveDb} /></div>
+          </div>
         </div>
       </div>
     </ThemeCtx.Provider>

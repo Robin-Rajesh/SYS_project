@@ -44,6 +44,15 @@
             "target_table": "sales_reps",
             "target_column": "rep_id",
             "type": "Many-to-One"
+        },
+        {
+            "source_db": "sales_normalized_1_1.db",
+            "source_table": "Genre",
+            "source_column": "genre_id",
+            "target_db": "sales_normalized_1_1.db",
+            "target_table": "Books",
+            "target_column": "book_id",
+            "type": "Many-to-One"
         }
     ]
 }
