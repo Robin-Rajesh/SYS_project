@@ -14,6 +14,17 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 const API = process.env.REACT_APP_API_URL || "http://localhost:8000";
+// --- GLOBAL API ERROR HANDLING ---
+const safeFetch = async (url, options = {}) => {
+  try {
+    const res = await fetch(url, options); // Call native fetch
+    if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
+    return await res.json();
+  } catch (err) {
+    console.error(`[API FAIL] ${url}:`, err);
+    return null;
+  }
+};
 
 // ─── THEME PALETTES ───────────────────────────────────────────
 const DARK = {
@@ -189,9 +200,8 @@ function ChatTab() {
     setSuggestLoading(true);
     try {
       const qs = context ? `?context=${encodeURIComponent(context)}` : "";
-      const res = await fetch(`${API}/api/chat/suggestions${qs}`);
-      const data = await res.json();
-      if (data.suggestions && data.suggestions.length > 0) {
+      const data = await safeFetch(`${API}/api/chat/suggestions${qs}`);
+      if (data && data.suggestions && data.suggestions.length > 0) {
         setSuggestions(data.suggestions);
       }
     } catch { }
@@ -208,12 +218,21 @@ function ChatTab() {
     setMessages(p => [...p, userMsg]);
     setInput(""); setLoading(true); setSteps([]);
 
-    const res = await fetch(`${API}/api/chat/stream`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: userMsg.content })
-    });
+    let response;
+    try {
+      response = await fetch(`${API}/api/chat/stream`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: userMsg.content })
+      });
+      if (!response.ok) throw new Error("Stream error");
+    } catch (err) {
+      console.error("Chat Stream Error:", err);
+      setMessages(p => [...p, { role: "assistant", content: "Error: Could not reach the AI analytical engine. Please check your connection or restart the backend." }]);
+      setLoading(false);
+      return;
+    }
 
-    const reader = res.body.getReader();
+    const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
     let pendingSql = null;
@@ -283,7 +302,7 @@ function ChatTab() {
   }, [input, loading]);
 
   const clearChat = async () => {
-    await fetch(`${API}/api/chat/clear`, { method: "POST" });
+    await safeFetch(`${API}/api/chat/clear`, { method: "POST" });
     setMessages([{ role: "assistant", content: "Memory cleared. Starting fresh.", ts: new Date() }]);
     setSteps([]);
     fetchSuggestions(); // reset to general suggestions
@@ -471,7 +490,7 @@ function ChatTab() {
       {messages.length <= 1 && (
         <div style={{ padding: "0 24px 12px", display: "flex", gap: 6, flexWrap: "wrap" }}>
           {suggestLoading ? (
-             <span style={{ fontSize: 11, color: C.muted, fontStyle: "italic" }}>✨ Generating context-aware suggestions...</span>
+            <span style={{ fontSize: 11, color: C.muted, fontStyle: "italic" }}>✨ Generating context-aware suggestions...</span>
           ) : suggestions.map((s, i) => (
             <button key={i} onClick={() => setInput(s)}
               style={{
@@ -528,14 +547,17 @@ function DataExplorerTab({ activeDb }) {
   const [scanLoading, setScanLoading] = useState(false);
 
   useEffect(() => {
-    fetch(`${API}/api/tables`).then(r => r.json())
-      .then(d => { setTables(d.tables); if (d.tables.length) setSelectedTable(d.tables[0]); })
-      .catch(() => { });
+    safeFetch(`${API}/api/tables`).then(d => {
+      if (d && d.tables) {
+        setTables(d.tables);
+        if (d.tables.length) setSelectedTable(d.tables[0]);
+      }
+    });
   }, [activeDb]);
 
   useEffect(() => {
     if (!selectedTable) return;
-    fetch(`${API}/api/tables/${selectedTable}/columns`).then(r => r.json())
+    safeFetch(`${API}/api/tables/${selectedTable}/columns`).then(r => r)
       .then(d => setColumns(d.columns)).catch(() => { });
   }, [selectedTable]);
 
@@ -550,17 +572,22 @@ function DataExplorerTab({ activeDb }) {
       if (filterCol && filterVal) { params.append("filter_col", filterCol); params.append("filter_val", filterVal); }
     }
     if (sortCol) { params.append("sort_col", sortCol); params.append("sort_order", sortOrder); }
-    const res = await fetch(`${API}/api/tables/${selectedTable}/data?${params}`);
-    const d = await res.json();
-    setData(d); setLoadingData(false);
+    const d = await safeFetch(`${API}/api/tables/${selectedTable}/data?${params}`);
+    if (d) {
+      setData(d);
+    }
+    setLoadingData(false);
   }, [selectedTable, globalSearch, filterCol, filterVal, sortCol, sortOrder, page]);
 
   useEffect(() => { fetchData(1); setPage(1); }, [selectedTable]); // eslint-disable-line
 
   const runScan = async () => {
     setScanLoading(true); setAiInsight("");
-    const res = await fetch(`${API}/api/tables/${selectedTable}/ai-scan`, { method: "POST" });
-    const d = await res.json(); setAiInsight(d.insight); setScanLoading(false);
+    const d = await safeFetch(`${API}/api/tables/${selectedTable}/ai-scan`, { method: "POST" });
+    if (d) {
+      setAiInsight(d.insight);
+    }
+    setScanLoading(false);
   };
 
   const colNames = columns.map(c => c.name);
@@ -755,28 +782,31 @@ function PolicyTab() {
     const q = input.trim();
     setMessages(p => [...p, { role: "user", content: q }]);
     setInput(""); setLoading(true);
-    const res = await fetch(`${API}/api/policy/search`, {
+    const d = await safeFetch(`${API}/api/policy/search`, {
       method: "POST",
       headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query: q })
     });
-    const d = await res.json();
-    setMessages(p => [...p, { role: "assistant", content: d.answer, chunks: d.chunks }]);
+    if (d) {
+      setMessages(p => [...p, { role: "assistant", content: d.answer, chunks: d.chunks }]);
+    }
     setLoading(false);
   };
 
   const uploadDoc = async () => {
     if (!uploadFile) return;
     const fd = new FormData(); fd.append("file", uploadFile);
-    const res = await fetch(`${API}/api/policy/upload`, { method: "POST", body: fd });
-    const d = await res.json();
-    setUploadStatus(d.success ? `✅ Uploaded: ${d.filename}` : "❌ Upload failed");
+    const d = await safeFetch(`${API}/api/policy/upload`, { method: "POST", body: fd });
+    if (d) {
+      setUploadStatus(d.success ? `✅ Uploaded: ${d.filename}` : "❌ Upload failed");
+    }
   };
 
   const rebuildVectorDb = async () => {
     setRebuildLoading(true); setRebuildStatus("");
-    const res = await fetch(`${API}/api/policy/rebuild-vectordb`, { method: "POST" });
-    const d = await res.json();
-    setRebuildStatus(d.success ? "✅ Vector DB rebuilt!" : "❌ Rebuild failed");
+    const d = await safeFetch(`${API}/api/policy/rebuild-vectordb`, { method: "POST" });
+    if (d) {
+      setRebuildStatus(d.success ? "✅ Vector DB rebuilt!" : "❌ Rebuild failed");
+    }
     setRebuildLoading(false);
   };
 
@@ -879,18 +909,18 @@ function SettingsTab({ activeDb, setActiveDb }) {
   const [sendNowLoading, setSendNowLoading] = useState(false);
 
   useEffect(() => {
-    fetch(`${API}/api/databases`).then(r => r.json()).then(d => {
+    safeFetch(`${API}/api/databases`).then(r => r).then(d => {
       setDatabases(d.databases); setSelectedDb(d.databases[0] || "");
     }).catch(() => { });
-    fetch(`${API}/api/scheduler/status`).then(r => r.json()).then(setSchedStatus).catch(() => { });
+    safeFetch(`${API}/api/scheduler/status`).then(r => r).then(setSchedStatus).catch(() => { });
   }, []);
 
   const connectDb = async () => {
-    const res = await fetch(`${API}/api/databases/connect`, {
+    const d = await safeFetch(`${API}/api/databases/connect`, {
       method: "POST",
       headers: { "Content-Type": "application/json" }, body: JSON.stringify({ db_filename: selectedDb })
     });
-    const d = await res.json(); if (d.success) setActiveDb(d.uri);
+    if (d && d.success) setActiveDb(d.uri);
   };
 
   return (
@@ -929,38 +959,45 @@ function ReportsTab() {
   const [sendNowLoading, setSendNowLoading] = useState(false);
 
   useEffect(() => {
-    fetch(`${API}/api/scheduler/status`).then(r => r.json()).then(setSchedStatus).catch(() => { });
+    safeFetch(`${API}/api/scheduler/status`).then(r => r).then(setSchedStatus).catch(() => { });
   }, []);
 
   const updateSchedule = async () => {
-    await fetch(`${API}/api/scheduler/update`, {
+    await safeFetch(`${API}/api/scheduler/update`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ time_str: scheduleTime, recipient_email: recipientEmail, enabled: schedEnabled })
     });
-    const d = await fetch(`${API}/api/scheduler/status`).then(r => r.json()); setSchedStatus(d);
+    const d = await safeFetch(`${API}/api/scheduler/status`).then(r => r); setSchedStatus(d);
   };
 
   const sendNow = async () => {
     if (!recipientEmail) return; setSendNowLoading(true);
     const fd = new FormData(); fd.append("recipient_email", recipientEmail);
-    const res = await fetch(`${API}/api/scheduler/send-now`, { method: "POST", body: fd });
-    const d = await res.json();
-    setEmailStatus(d.success ? "✅ Report sent!" : `❌ ${d.detail}`); setSendNowLoading(false);
+    const d = await safeFetch(`${API}/api/scheduler/send-now`, { method: "POST", body: fd });
+    if (d) {
+      setEmailStatus(d.success ? "✅ Report sent!" : `❌ ${d.detail}`);
+    }
+    setSendNowLoading(false);
   };
 
   const generateReport = async () => {
     setReportLoading(true); setReportHtml("");
-    const res = await fetch(`${API}/api/report/generate`, { method: "POST" });
-    const d = await res.json(); setReportHtml(d.html); setReportLoading(false);
+    const d = await safeFetch(`${API}/api/report/generate`, { method: "POST" });
+    if (d) {
+      setReportHtml(d.html);
+    }
+    setReportLoading(false);
   };
 
   const emailGeneratedReport = async () => {
     if (!emailReport || !reportHtml) return;
-    const res = await fetch(`${API}/api/report/email`, {
+    const d = await safeFetch(`${API}/api/report/email`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ recipient_email: emailReport, html_content: reportHtml })
     });
-    const d = await res.json(); setEmailStatus(d.success ? "✅ Report emailed!" : `❌ ${d.detail}`);
+    if (d) {
+      setEmailStatus(d.success ? "✅ Report emailed!" : `❌ ${d.detail}`);
+    }
   };
 
   return (
@@ -1041,15 +1078,13 @@ function SchemaMapperTab() {
 
   const loadRelationships = async () => {
     try {
-      const r = await fetch(`${API}/api/schema/relationships`);
-      const d = await r.json();
-      if (d.relationships && d.relationships.length > 0) {
+      const d = await safeFetch(`${API}/api/schema/relationships`);
+      if (d && d.relationships && d.relationships.length > 0) {
         setRelationships(d.relationships);
       } else {
         setAutoMapping(true);
-        const autoReq = await fetch(`${API}/api/schema/relationships/auto-map`, { method: "POST" });
-        const autoRes = await autoReq.json();
-        if (autoRes.relationships) {
+        const autoRes = await safeFetch(`${API}/api/schema/relationships/auto-map`, { method: "POST" });
+        if (autoRes && autoRes.relationships) {
           setRelationships(autoRes.relationships);
         }
         setAutoMapping(false);
@@ -1062,9 +1097,8 @@ function SchemaMapperTab() {
     setAutoMapping(true);
     setRelationships([]);
     try {
-      const autoReq = await fetch(`${API}/api/schema/relationships/auto-map`, { method: "POST" });
-      const autoRes = await autoReq.json();
-      if (autoRes.relationships) {
+      const autoRes = await safeFetch(`${API}/api/schema/relationships/auto-map`, { method: "POST" });
+      if (autoRes && autoRes.relationships) {
         setRelationships(autoRes.relationships);
       }
     } catch { }
@@ -1085,9 +1119,15 @@ function SchemaMapperTab() {
     Object.values(newTables).forEach(async (t) => {
       const key = `${t.db}.${t.table}`;
       if (!mapColumns[key]) {
-        const res = await fetch(`${API}/api/tables/${t.table}/columns?db_filename=${t.db}`);
-        const d = await res.json();
-        setMapColumns(p => ({ ...p, [key]: d.columns }));
+        try {
+          const d = await safeFetch(`${API}/api/tables/${t.table}/columns?db_filename=${t.db}`);
+          if (d && d.columns) {
+            setMapColumns(p => ({ ...p, [key]: d.columns }));
+          }
+        } catch (err) {
+          console.error("Failed to fetch columns for", key, err);
+          setMapColumns(p => ({ ...p, [key]: [] }));
+        }
       }
     });
   }, [relationships]);
@@ -1103,24 +1143,22 @@ function SchemaMapperTab() {
   const { svgW, svgH, positions } = useMemo(() => {
     const keys = Object.keys(allTables);
     if (keys.length === 0) return { svgW: 100, svgH: 100, positions: {} };
-    
+
     const COL_WIDTH = 220, ROW_H = 24, HEAD_H = 46, GAP_X = 160, GAP_Y = 30;
     const pos = {};
 
-    // Find the "fact" table (has the most relationships as source)
     const srcCounts = {};
     relationships.forEach(r => {
       const k = `${r.source_db}.${r.source_table}`;
       srcCounts[k] = (srcCounts[k] || 0) + 1;
     });
-    const factKey = Object.entries(srcCounts).sort((a,b) => b[1]-a[1])[0]?.[0] || keys[0];
+    const factKey = Object.entries(srcCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || keys[0];
     const dimKeys = keys.filter(k => k !== factKey);
 
-    // Fact table on the left, dimension tables stacked on right
     const getH = (key) => HEAD_H + (showColumns ? allTables[key].cols.length * ROW_H : 0);
     const totalDimH = dimKeys.reduce((sum, k) => sum + getH(k) + GAP_Y, 0);
     const factH = getH(factKey);
-    
+
     const startY = 20;
     const factY = startY + Math.max(0, (totalDimH - factH) / 2);
     pos[factKey] = { x: 30, y: factY };
@@ -1141,10 +1179,9 @@ function SchemaMapperTab() {
 
   const COL_WIDTH = 220, ROW_H = 24, HEAD_H = 46;
   const tableKeys = Object.keys(allTables);
-  // Re-compute fact key for render (same logic as useMemo)
   const srcCountsRender = {};
-  relationships.forEach(r => { const k = `${r.source_db}.${r.source_table}`; srcCountsRender[k] = (srcCountsRender[k]||0)+1; });
-  const factKeyRender = Object.entries(srcCountsRender).sort((a,b)=>b[1]-a[1])[0]?.[0] || tableKeys[0];
+  relationships.forEach(r => { const k = `${r.source_db}.${r.source_table}`; srcCountsRender[k] = (srcCountsRender[k] || 0) + 1; });
+  const factKeyRender = Object.entries(srcCountsRender).sort((a, b) => b[1] - a[1])[0]?.[0] || tableKeys[0];
 
   return (
     <div style={{ padding: 24, display: "flex", flexDirection: "column", gap: 20 }}>
@@ -1159,8 +1196,6 @@ function SchemaMapperTab() {
           </Btn>
         )}
       </div>
-
-
 
       {relationships.length > 0 && (
         <Card>
@@ -1185,11 +1220,11 @@ function SchemaMapperTab() {
       {tableKeys.length > 0 && (
         <div style={isMaximized ? {
           position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh',
-          background: 'rgba(0,0,0,0.85)', zIndex: 9999, display: 'flex', 
+          background: 'rgba(0,0,0,0.85)', zIndex: 9999, display: 'flex',
           flexDirection: 'column', p: 0, backdropFilter: 'blur(8px)',
           animation: 'slideIn .3s ease'
         } : {}}>
-          <Card style={isMaximized ? { 
+          <Card style={isMaximized ? {
             width: '94%', height: '94vh', margin: '3vh auto', display: 'flex', flexDirection: 'column', overflow: 'hidden'
           } : {}}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
@@ -1220,88 +1255,84 @@ function SchemaMapperTab() {
               </button>
             </div>
             <div style={{ overflow: "auto", flex: 1, background: C.surface, borderRadius: 8, padding: 20, display: 'flex', justifyContent: 'center' }}>
-              <svg width={svgW} height={svgH} style={{ 
-                display: 'block', 
+              <svg width={svgW} height={svgH} style={{
+                display: 'block',
                 transform: `scale(${zoom})`,
                 transformOrigin: 'top center',
-                transition: 'transform 0.2s cubic-bezier(0.4, 0, 0.2, 1)' 
+                transition: 'transform 0.2s cubic-bezier(0.4, 0, 0.2, 1)'
               }}>
-              {/* LAYER 1: RELATIONSHIP LINES (BOTTOM) */}
-              {relationships.map((rel, i) => {
-                const sk = `${rel.source_db}.${rel.source_table}`, tk = `${rel.target_db}.${rel.target_table}`;
-                const sp = positions[sk], tp = positions[tk];
-                if (!sp || !tp) return null;
-                const sColIdx = allTables[sk].cols.findIndex(c => c.name === rel.source_column);
-                const tColIdx = allTables[tk].cols.findIndex(c => c.name === rel.target_column);
-                const x1 = sp.x + COL_WIDTH, y1 = sp.y + (showColumns ? HEAD_H + (sColIdx >= 0 ? sColIdx * ROW_H + ROW_H/2 : HEAD_H/2) : HEAD_H/2);
-                const x2 = tp.x, y2 = tp.y + (showColumns ? HEAD_H + (tColIdx >= 0 ? tColIdx * ROW_H + ROW_H/2 : HEAD_H/2) : HEAD_H/2);
-                const mx = (x1 + x2) / 2;
-                return (
-                  <path key={i} d={`M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`}
-                    stroke={C.accent} strokeWidth={2} fill="none" opacity={0.4} />
-                );
-              })}
+                {relationships.map((rel, i) => {
+                  const sk = `${rel.source_db}.${rel.source_table}`, tk = `${rel.target_db}.${rel.target_table}`;
+                  const sp = positions[sk], tp = positions[tk];
+                  if (!sp || !tp) return null;
+                  const sColIdx = allTables[sk].cols.findIndex(c => c.name === rel.source_column);
+                  const tColIdx = allTables[tk].cols.findIndex(c => c.name === rel.target_column);
+                  const x1 = sp.x + COL_WIDTH, y1 = sp.y + (showColumns ? HEAD_H + (sColIdx >= 0 ? sColIdx * ROW_H + ROW_H / 2 : HEAD_H / 2) : HEAD_H / 2);
+                  const x2 = tp.x, y2 = tp.y + (showColumns ? HEAD_H + (tColIdx >= 0 ? tColIdx * ROW_H + ROW_H / 2 : HEAD_H / 2) : HEAD_H / 2);
+                  const mx = (x1 + x2) / 2;
+                  return (
+                    <path key={i} d={`M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`}
+                      stroke={C.accent} strokeWidth={2} fill="none" opacity={0.4} />
+                  );
+                })}
 
-              {/* LAYER 2: TABLES (MIDDLE) */}
-              {Object.keys(allTables).map(key => {
-                const t = allTables[key], p = positions[key];
-                const h = HEAD_H + (showColumns ? t.cols.length * ROW_H : 0);
-                const isFact = key === factKeyRender;
-                const hdrColor = isFact ? C.yellowDim : C.accentDim;
-                const hdrTextColor = isFact ? C.yellow : C.accent;
-                return (
-                  <g key={key}>
-                    <rect x={p.x} y={p.y} width={COL_WIDTH} height={h} rx={8} fill={C.cardRaised} stroke={isFact ? C.yellow+'44' : C.border} strokeWidth={isFact ? 1.5 : 1} />
-                    <rect x={p.x} y={p.y} width={COL_WIDTH} height={HEAD_H} rx={8} fill={hdrColor} />
-                    <rect x={p.x} y={p.y + HEAD_H - 8} width={COL_WIDTH} height={8} fill={hdrColor} />
-                    {isFact && <rect x={p.x + COL_WIDTH - 46} y={p.y + 6} width={40} height={14} rx={7} fill={C.yellow+'22'} />}
-                    {isFact && <text x={p.x + COL_WIDTH - 26} y={p.y + 16} textAnchor="middle" fontSize={8} fontWeight="700" fill={C.yellow}>⚡ Fact</text>}
-                    <text x={p.x + COL_WIDTH / 2} y={p.y + 18} textAnchor="middle" fontSize={12} fontWeight="700" fill={hdrTextColor}>{t.table}</text>
-                    <text x={p.x + COL_WIDTH / 2} y={p.y + 32} textAnchor="middle" fontSize={10} fill={C.muted}>{t.db}</text>
-                    {showColumns && t.cols.map((col, ci) => (
-                      <g key={col.name}>
-                        <rect x={p.x} y={p.y + HEAD_H + ci * ROW_H} width={COL_WIDTH} height={ROW_H}
-                          fill={ci % 2 === 0 ? C.surface : C.cardRaised} opacity={.8} />
-                        <text x={p.x + 12} y={p.y + HEAD_H + ci * ROW_H + 16} fontSize={10} fill={C.text}>
-                          {col.name}
-                          <tspan fill={C.muted} fontSize={8} dx={6}>{col.type}</tspan>
-                        </text>
-                      </g>
-                    ))}
-                  </g>
-                );
-              })}
-
-              {/* LAYER 3: BADGES & DOTS (TOP) */}
-              {relationships.map((rel, i) => {
-                const sk = `${rel.source_db}.${rel.source_table}`, tk = `${rel.target_db}.${rel.target_table}`;
-                const sp = positions[sk], tp = positions[tk];
-                if (!sp || !tp) return null;
-                const sColIdx = allTables[sk].cols.findIndex(c => c.name === rel.source_column);
-                const tColIdx = allTables[tk].cols.findIndex(c => c.name === rel.target_column);
-                const x1 = sp.x + COL_WIDTH, y1 = sp.y + (showColumns ? HEAD_H + (sColIdx >= 0 ? sColIdx * ROW_H + ROW_H/2 : HEAD_H/2) : HEAD_H/2);
-                const x2 = tp.x, y2 = tp.y + (showColumns ? HEAD_H + (tColIdx >= 0 ? tColIdx * ROW_H + ROW_H/2 : HEAD_H/2) : HEAD_H/2);
-                // Place badge in the horizontal gap center
-                const gapMidX = (x1 + x2) / 2;
-                const gapMidY = (y1 + y2) / 2;
-                return (
-                  <g key={`badge-${i}`}>
-                    <circle cx={x1} cy={y1} r={4.5} fill={C.yellow} stroke={C.bg} strokeWidth={1.5} />
-                    <circle cx={x2} cy={y2} r={4.5} fill={C.green} stroke={C.bg} strokeWidth={1.5} />
-                    <g transform={`translate(${gapMidX}, ${gapMidY})`}>
-                      <rect x={-42} y={-11} width={84} height={22} rx={11} 
-                        fill={C.bg} stroke={C.accent} strokeWidth={1.5}
-                        style={{ filter: 'drop-shadow(0 2px 6px rgba(0,0,0,0.5))' }} />
-                      <text textAnchor="middle" y={5} fontSize={9} fontWeight="700" fill={C.accent}>{rel.type}</text>
+                {Object.keys(allTables).map(key => {
+                  const t = allTables[key], p = positions[key];
+                  const h = HEAD_H + (showColumns ? t.cols.length * ROW_H : 0);
+                  const isFact = key === factKeyRender;
+                  const hdrColor = isFact ? C.yellowDim : C.accentDim;
+                  const hdrTextColor = isFact ? C.yellow : C.accent;
+                  return (
+                    <g key={key}>
+                      <rect x={p.x} y={p.y} width={COL_WIDTH} height={h} rx={8} fill={C.cardRaised} stroke={isFact ? C.yellow + '44' : C.border} strokeWidth={isFact ? 1.5 : 1} />
+                      <rect x={p.x} y={p.y} width={COL_WIDTH} height={HEAD_H} rx={8} fill={hdrColor} />
+                      <rect x={p.x} y={p.y + HEAD_H - 8} width={COL_WIDTH} height={8} fill={hdrColor} />
+                      {isFact && <rect x={p.x + COL_WIDTH - 46} y={p.y + 6} width={40} height={14} rx={7} fill={C.yellow + '22'} />}
+                      {isFact && <text x={p.x + COL_WIDTH - 26} y={p.y + 16} textAnchor="middle" fontSize={8} fontWeight="700" fill={C.yellow}>⚡ Fact</text>}
+                      <text x={p.x + COL_WIDTH / 2} y={p.y + 18} textAnchor="middle" fontSize={12} fontWeight="700" fill={hdrTextColor}>{t.table}</text>
+                      <text x={p.x + COL_WIDTH / 2} y={p.y + 32} textAnchor="middle" fontSize={10} fill={C.muted}>{t.db}</text>
+                      {showColumns && t.cols.map((col, ci) => (
+                        <g key={col.name}>
+                          <rect x={p.x} y={p.y + HEAD_H + ci * ROW_H} width={COL_WIDTH} height={ROW_H}
+                            fill={ci % 2 === 0 ? C.surface : C.cardRaised} opacity={.8} />
+                          <text x={p.x + 12} y={p.y + HEAD_H + ci * ROW_H + 16} fontSize={10} fill={C.text}>
+                            {col.name}
+                            <tspan fill={C.muted} fontSize={8} dx={6}>{col.type}</tspan>
+                          </text>
+                        </g>
+                      ))}
                     </g>
-                  </g>
-                );
-              })}
-            </svg>
-          </div>
-        </Card>
-      </div>
-    )}
+                  );
+                })}
+
+                {relationships.map((rel, i) => {
+                  const sk = `${rel.source_db}.${rel.source_table}`, tk = `${rel.target_db}.${rel.target_table}`;
+                  const sp = positions[sk], tp = positions[tk];
+                  if (!sp || !tp) return null;
+                  const sColIdx = allTables[sk].cols.findIndex(c => c.name === rel.source_column);
+                  const tColIdx = allTables[tk].cols.findIndex(c => c.name === rel.target_column);
+                  const x1 = sp.x + COL_WIDTH, y1 = sp.y + (showColumns ? HEAD_H + (sColIdx >= 0 ? sColIdx * ROW_H + ROW_H / 2 : HEAD_H / 2) : HEAD_H / 2);
+                  const x2 = tp.x, y2 = tp.y + (showColumns ? HEAD_H + (tColIdx >= 0 ? tColIdx * ROW_H + ROW_H / 2 : HEAD_H / 2) : HEAD_H / 2);
+                  const gapMidX = (x1 + x2) / 2;
+                  const gapMidY = (y1 + y2) / 2;
+                  return (
+                    <g key={`badge-${i}`}>
+                      <circle cx={x1} cy={y1} r={4.5} fill={C.yellow} stroke={C.bg} strokeWidth={1.5} />
+                      <circle cx={x2} cy={y2} r={4.5} fill={C.green} stroke={C.bg} strokeWidth={1.5} />
+                      <g transform={`translate(${gapMidX}, ${gapMidY})`}>
+                        <rect x={-42} y={-11} width={84} height={22} rx={11}
+                          fill={C.bg} stroke={C.accent} strokeWidth={1.5}
+                          style={{ filter: 'drop-shadow(0 2px 6px rgba(0,0,0,0.5))' }} />
+                        <text textAnchor="middle" y={5} fontSize={9} fontWeight="700" fill={C.accent}>{rel.type}</text>
+                      </g>
+                    </g>
+                  );
+                })}
+              </svg>
+            </div>
+          </Card>
+        </div>
+      )}
 
       {relationships.length === 0 && (
         <div style={{ textAlign: "center", padding: 60, color: C.muted }}>
@@ -1344,14 +1375,16 @@ function HybridSearchTab() {
     if (!q.trim()) return;
     setLoading(true); setError(""); setResult(null); setShowSql(false);
     try {
-      const res = await fetch(`${API}/api/hybrid-search`, {
+      const data = await safeFetch(`${API}/api/hybrid-search`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query: q }),
       });
-      if (!res.ok) throw new Error(`Server error: ${res.status}`);
-      const data = await res.json();
-      setResult(data);
+      if (data) {
+        setResult(data);
+      } else {
+        setError("Failed to reach analytical engine. Check backend server.");
+      }
     } catch (e) {
       setError(e.message);
     } finally {
@@ -1360,7 +1393,7 @@ function HybridSearchTab() {
   };
 
   const sqlOk = result?.sql?.success && result?.sql?.rows?.length > 0;
-  const kwOk  = result?.rag?.success && result?.rag?.blocks?.length > 0;
+  const kwOk = result?.rag?.success && result?.rag?.blocks?.length > 0;
 
   return (
     <div style={{ padding: 28, display: "flex", flexDirection: "column", gap: 20, height: "100%", overflowY: "auto" }}>
@@ -1659,13 +1692,13 @@ function HybridSearchTab() {
 }
 
 const TABS = [
-  { id: "chat",      label: "AI Assistant",  icon: MessageSquare },
-  { id: "hybrid",    label: "Hybrid Search", icon: Activity },
-  { id: "data",      label: "Data Explorer", icon: Database },
-  { id: "reports",   label: "AI Reports",    icon: FileText },
-  { id: "policy",    label: "Policy Hub",    icon: BookOpen },
-  { id: "schema",    label: "Relationship Viewer", icon: GitFork },
-  { id: "settings",  label: "Settings",      icon: Settings },
+  { id: "chat", label: "AI Assistant", icon: MessageSquare },
+  { id: "hybrid", label: "Hybrid Search", icon: Activity },
+  { id: "data", label: "Data Explorer", icon: Database },
+  { id: "reports", label: "AI Reports", icon: FileText },
+  { id: "policy", label: "Policy Hub", icon: BookOpen },
+  { id: "schema", label: "Relationship Viewer", icon: GitFork },
+  { id: "settings", label: "Settings", icon: Settings },
 ];
 
 // ─── USER PILL (topbar) ───────────────────────────────────
@@ -1789,10 +1822,14 @@ function MainApp() {
   const toggle = () => setTheme(t => t === "dark" ? "light" : "dark");
 
   useEffect(() => {
-    fetch(`${API}/api/health`).then(r => r.json()).then(() => {
-      setApiOk(true);
-      fetch(`${API}/api/databases`).then(r => r.json()).then(db => setActiveDb(db.active || "")).catch(() => { });
-    }).catch(() => setApiOk(false));
+    safeFetch(`${API}/api/health`).then(d => {
+      if (d) {
+        setApiOk(true);
+        safeFetch(`${API}/api/databases`).then(db => { if (db) setActiveDb(db.active || ""); });
+      } else {
+        setApiOk(false);
+      }
+    });
   }, []);
 
   return (

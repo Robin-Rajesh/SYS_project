@@ -25,7 +25,7 @@ import config
 
 # Default to the configured DB (Local SQLite or Cloud PG)
 _current_db_uri = config.DB_URI
-_engine = create_engine(_current_db_uri, echo=False)
+_engine = create_engine(_current_db_uri, echo=False, pool_pre_ping=True, pool_recycle=120, pool_size=1, max_overflow=0)
 _schema_cache = None
 
 def set_database_connection(db_uri: str):
@@ -35,7 +35,7 @@ def set_database_connection(db_uri: str):
     """
     global _current_db_uri, _engine, _schema_cache
     _current_db_uri = db_uri
-    _engine = create_engine(_current_db_uri, echo=False)
+    _engine = create_engine(_current_db_uri, echo=False, pool_pre_ping=True, pool_recycle=120, pool_size=1, max_overflow=0)
     _schema_cache = None  # Force schema refresh on next query
     print(f"[SQL Tool] Switched active database connection to: {db_uri}")
 

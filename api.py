@@ -78,7 +78,7 @@ class SchemaRelationship(BaseModel):
 def list_databases():
     if config.IS_CLOUD:
         return {"databases": ["Supabase PostgreSQL (Cloud)"], "active": "Supabase PostgreSQL (Cloud)"}
-    files = [f for f in os.listdir(config.DATA_DIR) if f.endswith((".db", ".sqlite"))]
+    files = [f for f in os.listdir(config.DATA_DIR) if f.endswith((".db", ".sqlite")) and f != "cloud_postgres.db"]
     return {"databases": files, "active": str(config.DB_PATH)}
 
 @app.post("/api/databases/connect")
@@ -97,7 +97,7 @@ def connect_database(req: DbConnectRequest):
 @app.get("/api/tables")
 def list_tables(db_filename: Optional[str] = None):
     if config.IS_CLOUD:
-        engine = create_engine(config.DB_URI)
+        engine = create_engine(config.DB_URI, pool_pre_ping=True, pool_recycle=120, pool_size=1, max_overflow=0)
     elif db_filename:
         engine = create_engine(f"sqlite:///{config.DATA_DIR / db_filename}")
     else:
@@ -107,15 +107,21 @@ def list_tables(db_filename: Optional[str] = None):
 
 @app.get("/api/tables/{table_name}/columns")
 def get_columns(table_name: str, db_filename: Optional[str] = None):
-    if config.IS_CLOUD:
-        engine = create_engine(config.DB_URI)
-    elif db_filename:
-        engine = create_engine(f"sqlite:///{config.DATA_DIR / db_filename}")
-    else:
-        engine = get_engine()
-    cols = [{"name": c["name"], "type": str(c["type"])}
-            for c in inspect(engine).get_columns(table_name)]
-    return {"columns": cols}
+    try:
+        from sqlalchemy import create_engine, inspect
+        if config.IS_CLOUD:
+            engine = create_engine(config.DB_URI, pool_pre_ping=True, pool_recycle=120, pool_size=1, max_overflow=0)
+        elif db_filename:
+            engine = create_engine(f"sqlite:///{config.DATA_DIR / db_filename}")
+        else:
+            engine = get_engine()
+        cols = [{"name": c["name"], "type": str(c["type"])}
+                for c in inspect(engine).get_columns(table_name)]
+        return {"columns": cols}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/tables/{table_name}/data")
 def get_table_data(

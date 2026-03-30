@@ -200,7 +200,7 @@ def _run_rag_lane(search_terms: List[str], max_per_table: int = 20) -> Dict[str,
             alias = re.sub(r"[^a-zA-Z0-9_]", "_", os.path.splitext(db_file)[0])
             try:
                 from sqlalchemy import create_engine as ce
-                other_engine = ce(f"sqlite:///{config.DATA_DIR / db_file}")
+                other_engine = ce(f"sqlite:///{config.DATA_DIR / db_file}", pool_pre_ping=True, pool_recycle=120, pool_size=1, max_overflow=0)
                 other_insp = sa_inspect(other_engine)
                 for t in other_insp.get_table_names():
                     table_meta.append((f"{alias}.{t}", other_insp.get_columns(t), alias))
