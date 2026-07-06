@@ -1,11 +1,11 @@
 """
-rag_tool.py — Policy Document Search Tool (RAG with ChromaDB)
+rag_tool.py — Policy Document Search Tool (RAG with pgvector)
 ==============================================================
 LangChain Tool that:
   1. Loads all .txt policy documents from docs/
   2. Chunks them with RecursiveCharacterTextSplitter
-  3. Embeds with HuggingFace sentence-transformers (local, free)
-  4. Stores / loads from a persistent ChromaDB vector store
+  3. Embeds with Google gemini-embedding-001 (MRL @ 1536-dim via API)
+  4. Stores / loads from a pgvector store on Supabase (or local fallback)
   5. Retrieves top-4 relevant chunks for any policy question
 """
 
@@ -13,113 +13,126 @@ import os
 from langchain_core.tools import tool
 from langchain_community.document_loaders import TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import Chroma
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_postgres import PGVector
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
 # Import project configuration
 import config
+from tools.sql_tool import get_engine
 
 # ═══════════════════════════════════════════════════════════════
 # 1. EMBEDDING MODEL (loaded once at module level)
 # ═══════════════════════════════════════════════════════════════
-# Using sentence-transformers "all-MiniLM-L6-v2" — small, fast,
-# runs 100 % locally with zero API cost.  The first import will
-# download the model weights (~80 MB) if they are not cached.
 
-_embeddings = HuggingFaceEmbeddings(
-    model_name=config.EMBEDDING_MODEL,
-    model_kwargs={"device": "cpu"},          # Force CPU (safe on all machines)
-    encode_kwargs={"normalize_embeddings": True},
+_embeddings = GoogleGenerativeAIEmbeddings(
+    model=config.EMBEDDING_MODEL,
+    google_api_key=config.GOOGLE_API_KEY,
+    output_dimensionality=config.EMBEDDING_DIMENSIONS,  # MRL truncation: 1536-dim
 )
 
 # ═══════════════════════════════════════════════════════════════
 # 2. BUILD OR LOAD THE VECTOR STORE
 # ═══════════════════════════════════════════════════════════════
 
-def _vector_store_exists() -> bool:
-    """
-    Check whether the ChromaDB persistence directory is non-empty.
-    If it contains files, we assume the store was already built on
-    a previous run and simply load it.
-    """
-    vs_dir = str(config.VECTOR_STORE_DIR)
-    return os.path.isdir(vs_dir) and len(os.listdir(vs_dir)) > 0
+class LocalVectorStore:
+    def __init__(self, embeddings):
+        self.embeddings = embeddings
+        self.documents = []
+        self.vectors = []
+        
+    def add_documents(self, documents):
+        self.documents.extend(documents)
+        texts = [doc.page_content for doc in documents]
+        self.vectors.extend(self.embeddings.embed_documents(texts))
+        
+    def similarity_search(self, query: str, k: int = 4):
+        if not self.documents:
+            return []
+        import numpy as np
+        query_vec = np.array(self.embeddings.embed_query(query))
+        doc_vecs = np.array(self.vectors)
+        # Cosine similarity
+        scores = np.dot(doc_vecs, query_vec) / (np.linalg.norm(doc_vecs, axis=1) * np.linalg.norm(query_vec) + 1e-9)
+        top_k_idx = np.argsort(scores)[-k:][::-1]
+        return [self.documents[i] for i in top_k_idx]
 
+def _build_and_get_vector_store():
+    """
+    Connect to pgvector. If it's empty, load and chunk all .txt 
+    documents from docs/, embed them, and persist to pgvector.
+    In local mode, uses an in-memory vector store.
+    """
+    engine = get_engine()
+    
+    # Check if we should fallback to in-memory/sqlite vector store if not cloud
+    if not config.IS_CLOUD:
+        print("[RAG] Using local in-memory vector store for SQLite mode.")
+        vector_store = LocalVectorStore(embeddings=_embeddings)
+    else:
+        vector_store = PGVector(
+            embeddings=_embeddings,
+            collection_name="policy_docs",
+            connection=engine,
+            use_jsonb=True,
+        )
 
-def _build_vector_store() -> Chroma:
-    """
-    Load all .txt documents from docs/, chunk them, embed them,
-    and persist the ChromaDB collection to disk.
-    """
+        try:
+            # Check if collection is empty
+            with engine.connect() as conn:
+                from sqlalchemy import text
+                res = conn.execute(text("SELECT COUNT(*) FROM langchain_pg_embedding WHERE collection_id = (SELECT uuid FROM langchain_pg_collection WHERE name = 'policy_docs' LIMIT 1)")).scalar()
+                
+            if res and res > 0:
+                print(f"[RAG] Vector store already populated with {res} chunks.")
+                return vector_store
+        except Exception as e:
+            print(f"[RAG] Tables might not exist yet, proceeding to populate. ({e})")
+
     docs_dir = str(config.DOCS_DIR)
     all_documents = []
 
-    # Load every .txt file inside the docs/ directory
     for filename in os.listdir(docs_dir):
         if filename.endswith(".txt"):
             filepath = os.path.join(docs_dir, filename)
             loader = TextLoader(filepath, encoding="utf-8")
             documents = loader.load()
-            # Attach the source filename as metadata so we can cite it
             for doc in documents:
                 doc.metadata["source"] = filename
             all_documents.extend(documents)
 
     if not all_documents:
-        raise FileNotFoundError(
-            f"No .txt files found in {docs_dir}. "
-            "Run generate_data.py first to create the policy documents."
-        )
+        print(f"[RAG] No .txt files found in {docs_dir}.")
+        return vector_store
 
-    # Split documents into smaller chunks for more precise retrieval
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=500,       # ~500 characters per chunk
-        chunk_overlap=50,     # 50 character overlap to preserve context at boundaries
+        chunk_size=500,
+        chunk_overlap=50,
     )
     chunks = splitter.split_documents(all_documents)
     print(f"[RAG] Split {len(all_documents)} documents into {len(chunks)} chunks.")
 
-    # Embed and persist to ChromaDB
-    vector_store = Chroma.from_documents(
-        documents=chunks,
-        embedding=_embeddings,
-        persist_directory=str(config.VECTOR_STORE_DIR),
-    )
-    print(f"[RAG] Vector store built and persisted to {config.VECTOR_STORE_DIR}")
+    # Embed and persist
+    vector_store.add_documents(chunks)
+    print(f"[RAG] Vector store built and populated.")
     return vector_store
 
-
-def _load_vector_store() -> Chroma:
-    """Load an existing persisted ChromaDB collection from disk."""
-    return Chroma(
-        persist_directory=str(config.VECTOR_STORE_DIR),
-        embedding_function=_embeddings,
-    )
-
-
-def _get_vector_store() -> Chroma:
-    """Return the vector store — build it on first run, load thereafter."""
-    if _vector_store_exists():
-        print("[RAG] Loading existing vector store from disk …")
-        return _load_vector_store()
-    else:
-        print("[RAG] Building vector store for the first time …")
-        return _build_vector_store()
-
-
-# Initialize once at module load time
-_vector_store = _get_vector_store()
+# We delay initialization until the first query to avoid DB connection issues on import
+_vector_store = None
 
 # ═══════════════════════════════════════════════════════════════
 # 3. RETRIEVAL FUNCTION
 # ═══════════════════════════════════════════════════════════════
 
 def _retrieve(query: str, k: int = 4) -> str:
-    """
-    Retrieve the top-k most relevant document chunks for the query.
-    Format each result with its source filename for transparency.
-    """
-    results = _vector_store.similarity_search(query, k=k)
+    global _vector_store
+    if _vector_store is None:
+        _vector_store = _build_and_get_vector_store()
+
+    try:
+        results = _vector_store.similarity_search(query, k=k)
+    except Exception as e:
+        print(f"[RAG] Retrieval failed: {e}")
+        return "DATA UNAVAILABLE: Policy retrieval failed (ensure pgvector is configured)."
 
     if not results:
         return "DATA UNAVAILABLE: No relevant policy information found."

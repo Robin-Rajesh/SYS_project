@@ -51,6 +51,20 @@ if "policy_messages" not in st.session_state:
 if "active_db" not in st.session_state:
     st.session_state.active_db = f"sqlite:///{config.DB_PATH}"
 
+if "schema_synced" not in st.session_state:
+    st.session_state.schema_synced = True
+    if config.NEW_SUPABASE_DB_PARAMS:
+        with st.spinner("Syncing Database Schema to Vector DB (Smart Sync)..."):
+            try:
+                from scripts.embed_schema import sync_embeddings
+                res = sync_embeddings()
+                if res["embedded"] > 0:
+                    st.toast(f"Schema Vectorized: {res['embedded']} tables updated.", icon="✅")
+                else:
+                    st.toast(f"Schema up-to-date (all {res['skipped']} tables skipped).", icon="⚡")
+            except Exception as e:
+                st.warning(f"Failed to sync schema vectors: {e}")
+
 # ═══════════════════════════════════════════════════════════════
 # 3. SIDEBAR: CONNECTION MANAGER & SETTINGS
 # ═══════════════════════════════════════════════════════════════
@@ -355,7 +369,8 @@ with tab_data:
             # Count total rows for pagination
             try:
                 count_query = f"SELECT COUNT(*) as c FROM {selected_table} {where_clause}"
-                count_df = pd.read_sql(count_query, engine)
+                from sqlalchemy import text
+                count_df = pd.read_sql(text(count_query), engine)
                 total_rows = int(count_df.iloc[0, 0]) if not count_df.empty else 0
             except:
                 total_rows = 1000
@@ -373,7 +388,8 @@ with tab_data:
             offset = (page - 1) * page_size
             query = f"SELECT * FROM {selected_table} {where_clause} {order_clause} LIMIT {page_size} OFFSET {offset}"
             
-            df = pd.read_sql(query, engine)
+            from sqlalchemy import text
+            df = pd.read_sql(text(query), engine)
             st.dataframe(df, use_container_width=True)
             
             st.markdown("---")
@@ -557,7 +573,8 @@ with tab_dashboard:
                     else:
                         query = f"SELECT {dash_x}, {dash_y} FROM {dash_table} LIMIT {limit_val}"
                         
-                    df_dash = pd.read_sql(query, engine)
+                    from sqlalchemy import text
+                    df_dash = pd.read_sql(text(query), engine)
                     
                     
                     if not df_dash.empty:
@@ -660,7 +677,7 @@ with tab_policy:
 
     st.markdown("---")
     st.subheader("⚙️ Inside the RAG Engine (Under the Hood)")
-    st.markdown("To prove how this works, you can manually trigger the **Document Ingestion Pipeline**. This will scrape raw PDFs/Text, run the Recursive Character Text Splitter, and generate Mathematics Vectors (Embeddings) using HuggingFace.")
+    st.markdown("To prove how this works, you can manually trigger the **Document Ingestion Pipeline**. This will scrape raw PDFs/Text, run the Recursive Character Text Splitter, and generate Mathematics Vectors (Embeddings) using Google's **gemini-embedding-001** API (MRL @ 1536-dim).")
     
     if st.button("🛠️ Rebuild Vector Database", use_container_width=True):
         progress_bar = st.progress(0)
@@ -678,11 +695,11 @@ with tab_policy:
             time.sleep(1.5)
             progress_bar.progress(50)
             
-            status_text.text("Step 3: Initializing local HuggingFace Embedding Model (all-MiniLM-L6-v2)...")
+            status_text.text("Step 3: Calling Google gemini-embedding-001 API (MRL @ 1536-dim)...")
             time.sleep(1)
             progress_bar.progress(75)
             
-            status_text.text("Step 4: Vectorizing text chunks and persisting to ChromaDB...")
+            status_text.text("Step 4: Vectorizing text chunks and persisting to pgvector (Supabase)...")
             # Actually run the rebuild
             _build_vector_store()
             

@@ -9,15 +9,16 @@ Provides:
 """
 
 from agent import run_agent, clear_memory
+import config
 
 # ═══════════════════════════════════════════════════════════════
 # 1. WELCOME BANNER
 # ═══════════════════════════════════════════════════════════════
 
-BANNER = r"""
+BANNER = rf"""
 ╔══════════════════════════════════════════╗
 ║   🤖 Agentic Sales Data Analyst v1.0    ║
-║   Powered by LangChain + Gemini Flash   ║
+║   Powered by LangChain + {config.MODEL_NAME:<20}║
 ╚══════════════════════════════════════════╝
 Type 'help' for example questions, 'clear' to reset memory,
 or 'exit' / 'quit' to leave.
@@ -55,6 +56,18 @@ SEPARATOR = "\n" + "─" * 60 + "\n"
 
 def main():
     """Run the interactive terminal chat loop."""
+    if config.NEW_SUPABASE_DB_PARAMS:
+        print("\n⏳ Syncing Database Schema to Vector DB (Smart Sync)...")
+        try:
+            from scripts.embed_schema import sync_embeddings
+            res = sync_embeddings()
+            if res["embedded"] > 0:
+                print(f"✅ Schema Vectorized: {res['embedded']} tables updated.")
+            else:
+                print(f"⚡ Schema up-to-date (all {res['skipped']} tables skipped).")
+        except Exception as e:
+            print(f"⚠️ Failed to sync schema vectors: {e}")
+
     print(BANNER)
 
     while True:

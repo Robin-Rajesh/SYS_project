@@ -23,13 +23,28 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import create_engine, inspect, text
 
+from contextlib import asynccontextmanager
 import config
 from agent import stream_agent, run_agent, clear_memory
 from tools.sql_tool import set_database_connection, get_engine
-from tools.rag_tool import _retrieve, _build_vector_store
+from tools.rag_tool import _retrieve, _build_and_get_vector_store
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup actions
+    print("[Lifespan Startup] Running database and schema auto-sync...")
+    try:
+        from scripts.sync_schema import sync_schema
+        from scripts.embed_schema import sync_embeddings
+        sync_schema()
+        sync_embeddings()
+        print("[Lifespan Startup] Schema auto-sync complete!")
+    except Exception as e:
+        print(f"[Lifespan Startup] Error during startup schema auto-sync: {e}")
+    yield
 
 # ─────────────────────────────────────────────
-app = FastAPI(title="Enterprise Data Analyst AI", version="1.0.0")
+app = FastAPI(title="Enterprise Data Analyst AI", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -70,6 +85,11 @@ class SchemaRelationship(BaseModel):
     target_column: str
     type: str
 
+class TableMetaOut(BaseModel):
+    table_name: str
+    description: str
+    updated_at: Optional[str] = None
+
 # ═══════════════════════════════════════════════
 # 1. DATABASE
 # ═══════════════════════════════════════════════
@@ -90,6 +110,8 @@ def connect_database(req: DbConnectRequest):
     try:
         set_database_connection(uri)
         clear_memory()
+        global _cached_general_suggestions
+        _cached_general_suggestions = None  # Force fresh suggestions for new DB
         return {"success": True, "uri": uri}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -135,26 +157,46 @@ def get_table_data(
     global_search: Optional[str] = None
 ):
     engine = get_engine()
-    # Build WHERE clause
+    from sqlalchemy import text
+    query_params = {}
+    
+    where_clauses = []
+    
+    # Build Global Search clause
     if global_search:
-        # Search across all text columns
+        # Search across all text columns, case-insensitive and quoting column names for Postgres
         cols = [c["name"] for c in inspect(engine).get_columns(table_name)]
-        like_clauses = " OR ".join([f"CAST({col} AS TEXT) LIKE '%{global_search}%'" for col in cols])
-        where = f"WHERE ({like_clauses})"
-    elif filter_col and filter_val:
-        where = f"WHERE {filter_col} LIKE '%{filter_val}%'"
-    else:
-        where = ""
-    order = f"ORDER BY {sort_col} {sort_order}" if sort_col else ""
+        like_clauses = " OR ".join([f"LOWER(CAST(\"{col}\" AS TEXT)) LIKE LOWER(:glob_val)" for col in cols])
+        where_clauses.append(f"({like_clauses})")
+        query_params["glob_val"] = f"%{global_search}%"
+        
+    # Build specific column filter clause
+    if filter_col and filter_col != "None" and filter_val:
+        where_clauses.append(f"LOWER(CAST(\"{filter_col}\" AS TEXT)) LIKE LOWER(:filt_val)")
+        query_params["filt_val"] = f"%{filter_val}%"
+        
+    where = ""
+    if where_clauses:
+        where = "WHERE " + " AND ".join(where_clauses)
+        
+    order = f"ORDER BY \"{sort_col}\" {sort_order}" if sort_col and sort_col != "None" else ""
     offset = (page - 1) * page_size
+    
     try:
-        count_df = pd.read_sql(f"SELECT COUNT(*) as c FROM {table_name} {where}", engine)
+        count_query = text(f"SELECT COUNT(*) as c FROM \"{table_name}\" {where}")
+        count_df = pd.read_sql(count_query, engine, params=query_params)
         total = int(count_df.iloc[0, 0])
-    except Exception:
+    except Exception as e:
+        print("Count err:", e)
         total = 0
-    df = pd.read_sql(
-        f"SELECT * FROM {table_name} {where} {order} LIMIT {page_size} OFFSET {offset}", engine
-    )
+        
+    try:
+        data_query = text(f"SELECT * FROM \"{table_name}\" {where} {order} LIMIT {page_size} OFFSET {offset}")
+        df = pd.read_sql(data_query, engine, params=query_params)
+    except Exception as e:
+        print("Data err:", e)
+        df = pd.DataFrame()
+        
     return {
         "rows": df.to_dict(orient="records"),
         "total": total,
@@ -168,14 +210,42 @@ def ai_data_quality_scan(table_name: str):
     from agent import llm
     engine = get_engine()
     schema_info = [(c["name"], str(c["type"])) for c in inspect(engine).get_columns(table_name)]
-    df = pd.read_sql(f"SELECT * FROM {table_name} LIMIT 10", engine)
-    prompt = (
-        f"You are an AI Data Quality Engineer. Review this table schema {schema_info} "
-        f"and the following data snippet:\n{df.head(10).to_string(index=False)}\n"
-        f"Identify 2 potential data quality risks or anomalies. Keep it concise."
-    )
+    from sqlalchemy import text
+    df = pd.read_sql(text(f"SELECT * FROM \"{table_name}\" LIMIT 10"), engine)
+    prompt = f"""You are an AI Data Quality Engineer. Analyze the table schema and data sample below.
+Identify exactly 2 data quality issues. Return ONLY a valid JSON array — no markdown, no explanation outside the JSON.
+
+Each object in the array must have exactly these keys:
+  "title"          – short issue name (5 words max)
+  "severity"       – one of: "high", "medium", "low"
+  "description"    – what the problem is (1–2 sentences, plain English)
+  "recommendation" – concrete fix the developer should apply (1 sentence)
+  "affected"       – which column(s) are impacted (comma-separated names or "All columns")
+
+TABLE SCHEMA:
+{schema_info}
+
+DATA SAMPLE (first 10 rows):
+{df.head(10).to_string(index=False)}
+
+Return only the JSON array."""
+
     result = llm.invoke(prompt)
-    return {"insight": result.content}
+    raw = result.content.strip().replace("```json", "").replace("```", "").strip()
+    try:
+        issues = json.loads(raw)
+        if not isinstance(issues, list):
+            raise ValueError("not a list")
+    except Exception:
+        # Fallback: wrap the raw text in a single structured item
+        issues = [{
+            "title": "Analysis Result",
+            "severity": "medium",
+            "description": raw[:400],
+            "recommendation": "Review the findings above and consult your DBA.",
+            "affected": "See description"
+        }]
+    return {"issues": issues}
 
 # ═══════════════════════════════════════════════
 # 2. AGENT CHAT (SSE streaming)
@@ -184,37 +254,71 @@ def ai_data_quality_scan(table_name: str):
 @app.post("/api/chat/stream")
 async def chat_stream(req: ChatRequest):
     async def generate() -> AsyncGenerator[str, None]:
-        final_response = "No response generated."
+        import tools.sql_tool as _sql_mod
+
+        final_response = ""
         plotly_json = None
+        all_sql_queries: list[str] = []  # track every SQL call in order
+        total_tokens_used = 0
+        last_tool_result = ""
+        all_tool_results: list[str] = []  # all raw tool outputs in order
+
+        # Reset the shared DataFrame before this request so a stale result
+        # from a prior request cannot leak through if the agent skips SQL.
+        _sql_mod.last_query_dataframe = pd.DataFrame()
+        _sql_mod.last_executed_sqls.clear()
 
         for step in stream_agent(req.message):
             if "agent" in step:
                 msgs = step["agent"].get("messages", [])
                 if msgs:
                     msg = msgs[-1]
+
+                    # --- Parse tool calls (does NOT clear content) ---
                     if getattr(msg, "tool_calls", None):
                         for tc in msg.tool_calls:
                             event = {"type": "tool_call", "name": tc["name"], "args": str(tc["args"])}
                             yield f"data: {json.dumps(event)}\n\n"
-                            if tc["name"] == "visualization_tool":
-                                try:
-                                    from tools.visualizer_tool import _create_chart
-                                    
-                                    # Универсальная распаковка аргументов LangChain LLM 
-                                    args_val = tc.get("args", {})
-                                    if isinstance(args_val, str):
+
+                            try:
+                                args_val = tc.get("args", {})
+                                if isinstance(args_val, str):
+                                    try:
                                         args_dict = json.loads(args_val)
-                                    else:
-                                        args_dict = args_val
-                                        
+                                    except Exception:
+                                        import ast
+                                        try:
+                                            args_dict = ast.literal_eval(args_val)
+                                        except Exception:
+                                            args_dict = {}
+                                else:
+                                    args_dict = args_val
+
+                                if tc["name"] == "sql_query_tool":
+                                    sql_q = (
+                                        args_dict.get("query") or
+                                        args_dict.get("sql") or
+                                        args_dict.get("input") or
+                                        args_dict.get("sql_query")
+                                    )
+                                    if not sql_q and args_dict:
+                                        sql_q = list(args_dict.values())[0]
+                                    if sql_q:
+                                        all_sql_queries.append(sql_q)
+                                        print(f"\n🔍 [SQL #{len(all_sql_queries)}]\n{sql_q}\n")
+
+                                if tc["name"] == "visualization_tool":
+                                    from tools.visualizer_tool import _create_chart
+
                                     if "input_json" in args_dict:
                                         in_json = args_dict["input_json"]
                                         payload = json.loads(in_json) if isinstance(in_json, str) else in_json
                                     else:
                                         payload = args_dict
 
-                                    df = pd.DataFrame(payload.get("data", []))
-                                    if not df.empty:
+                                    # Use the real DataFrame from memory, ignore whatever the LLM tried to pass
+                                    df = _sql_mod.last_query_dataframe
+                                    if df is not None and not df.empty:
                                         fig = _create_chart(
                                             df,
                                             payload.get("chart_type", "bar"),
@@ -224,11 +328,13 @@ async def chat_stream(req: ChatRequest):
                                             payload.get("color_column", "")
                                         )
                                         plotly_json = fig.to_json()
-                                except Exception as e:
-                                    import traceback
-                                    print("❌ VISUALIZER PARSE ERROR:", e)
-                                    traceback.print_exc()
-                        content = ""
+                            except Exception as e:
+                                import traceback
+                                print("❌ TOOL PARSE ERROR:", e)
+                                traceback.print_exc()
+
+                    # --- Extract text content from this agent message ---
+                    content = ""
                     if hasattr(msg, "content"):
                         if isinstance(msg.content, str):
                             content = msg.content
@@ -237,23 +343,155 @@ async def chat_stream(req: ChatRequest):
                                 m.get("text", "") if isinstance(m, dict) else str(m)
                                 for m in msg.content
                             )
-                    if content.strip():
+
+                    # --- Token tracking ---
+                    if hasattr(msg, "usage_metadata") and msg.usage_metadata:
+                        total_tokens_used += msg.usage_metadata.get("total_tokens", 0)
+                        print(
+                            f"\n📊 [TOKEN USAGE] Input: {msg.usage_metadata.get('input_tokens', 0)} "
+                            f"| Output: {msg.usage_metadata.get('output_tokens', 0)} "
+                            f"| Total Current Step: {msg.usage_metadata.get('total_tokens', 0)}\n"
+                        )
+
+                    # Only update final_response when the message has actual text
+                    # and is not a pure tool-call message (those have empty text content).
+                    if content.strip() and not getattr(msg, "tool_calls", None):
                         final_response = content
 
             elif "tools" in step:
                 msgs = step["tools"].get("messages", [])
                 if msgs:
-                    yield f"data: {json.dumps({'type': 'tool_result', 'content': msgs[-1].content[:500]})}\n\n"
+                    last_tool_result = msgs[-1].content
+                    all_tool_results.append(last_tool_result)
+                    yield f"data: {json.dumps({'type': 'tool_result', 'content': last_tool_result[:500]})}\n\n"
 
             elif "error" in step:
                 yield f"data: {json.dumps({'type': 'error', 'content': step['error']})}\n\n"
 
-        if final_response == "No response generated.":
-            final_response = "I have successfully processed your request."
+        # ── Stream finished — begin post-processing ──────────────────────────
+
+        # Fallback: if the agent emitted no final text, surface the last tool result.
+        if not final_response.strip():
+            if last_tool_result.strip():
+                final_response = last_tool_result
+            else:
+                final_response = "The agent completed the task but produced no text output. Please try rephrasing your question."
+
+        # ── GROUND-TRUTH OVERRIDE ────────────────────────────────────────────
+        # last_query_dataframe holds the real result set from the last SQL call.
+        # Case A: last query empty + DATA UNAVAILABLE seen → hard override.
+        # Case B: last query has rows → insert verified table right after narrative
+        #         then SQL block at the very bottom (no visual gap between text & table).
+        # Case C: no SQL at all → pass narrative through unchanged.
+
+        df_result = _sql_mod.last_query_dataframe
+        actual_sqls = _sql_mod.last_executed_sqls
+        
+        is_zero_row = (
+            all_sql_queries                                           # SQL was called
+            and df_result.empty                                       # tool returned nothing
+            and any("DATA UNAVAILABLE" in r for r in all_tool_results)  # guard string present
+        )
+
+        # Build the SQL block (appended last so it doesn't break up narrative + table)
+        sql_block_str = ""
+        if actual_sqls and "```sql" not in final_response:
+            if len(actual_sqls) == 1:
+                sql_block_str = f"\n\n```sql\n{actual_sqls[0]}\n```"
+            else:
+                combined = "\n\n".join(
+                    f"-- Query {i+1}\n{q}" for i, q in enumerate(actual_sqls)
+                )
+                sql_block_str = f"\n\n```sql\n{combined}\n```"
+
+        if is_zero_row:
+            # Case A — all queries returned 0 rows
+            print("\u26a0\ufe0f  [HALLUCINATION GUARD] SQL returned 0 rows. LLM response overridden.")
+            unavail_msg = next(
+                (r for r in all_tool_results if "DATA UNAVAILABLE" in r),
+                "DATA UNAVAILABLE: The query returned no results."
+            )
+            user_msg = unavail_msg.split("[AGENT INSTRUCTION]")[0].strip()
+            final_response = (
+                f"**No matching data found in the database.**\n\n"
+                f"The SQL {'query was' if len(actual_sqls) == 1 else f'{len(actual_sqls)} queries were'} "
+                f"executed and returned **0 rows**. "
+                f"This means the condition you asked about does not exist in the current dataset.\n\n"
+                f"> {user_msg}\n\n"
+                f"You may want to rephrase the question, check for a related condition, "
+                f"or ask what data *is* available in the relevant tables."
+            )
+            final_response += sql_block_str
+
+        elif not df_result.empty:
+            # Case B — append verified table immediately after narrative (no SQL in between)
+            try:
+                table_section = df_result.head(50).to_markdown(index=False)
+                overflow_note = ""
+                if len(df_result) > 50:
+                    overflow_note = f"\n*Showing 50 of {len(df_result):,} rows.*"
+
+                verified_block = (
+                    f"\n\n**Results** ({len(df_result):,} row{'s' if len(df_result) != 1 else ''})\n\n"
+                    f"{table_section}{overflow_note}\n\n"
+                    f"{_sql_mod.generate_programmatic_summary(df_result)}"
+                )
+                final_response += verified_block + sql_block_str
+                print(f"   \u2192 Verified block appended ({min(len(df_result), 50)} of {len(df_result)} rows).")
+            except Exception as _block_err:
+                print(f"\u274c [VERIFIED BLOCK ERROR] {_block_err}")
+                import traceback; traceback.print_exc()
+                final_response += sql_block_str  # still show SQL even if table failed
+
+        else:
+            # Case C/D: either no SQL at all, or the agent wrote SQL as text without calling the tool.
+            # Case D: detect a sql block in the response and auto-execute it so the user gets real data.
+            if not actual_sqls and "```sql" in final_response:
+                import re as _re
+                sql_match = _re.search(r"```sql\n([\s\S]*?)\n```", final_response, _re.IGNORECASE)
+                if sql_match:
+                    extracted_sql = sql_match.group(1).strip()
+                    print(f"\n⚡ [CASE D] Agent skipped tool call — auto-executing extracted SQL:\n{extracted_sql}\n")
+                    try:
+                        from tools.sql_tool import _is_read_only, _validate_and_fix_sql
+                        from sqlalchemy import text as _text
+                        import pandas as _pd
+                        if _is_read_only(extracted_sql):
+                            validated_sql, _ = _validate_and_fix_sql(extracted_sql)
+                            with get_engine().connect() as _conn:
+                                auto_df = _pd.read_sql(_text(validated_sql), _conn)
+                            if not auto_df.empty:
+                                table_section = auto_df.head(50).to_markdown(index=False)
+                                overflow_note = f"\n*Showing 50 of {len(auto_df):,} rows.*" if len(auto_df) > 50 else ""
+                                verified_block = (
+                                    f"\n\n**Results** ({len(auto_df):,} row{'s' if len(auto_df) != 1 else ''})\n\n"
+                                    f"{table_section}{overflow_note}\n\n"
+                                    f"{_sql_mod.generate_programmatic_summary(auto_df)}"
+                                )
+                                final_response += verified_block
+                                print(f"   → Case D: auto-injected {min(len(auto_df), 50)} of {len(auto_df)} rows.")
+                    except Exception as _case_d_err:
+                        print(f"❌ [CASE D ERROR] {_case_d_err}")
+            else:
+                final_response += sql_block_str
+
+
+        # Reset for the next request
+        _sql_mod.last_query_dataframe = pd.DataFrame()
+        _sql_mod.last_executed_sqls.clear()
+        # ────────────────────────────────────────────────────────────────────
+
+        # Log summary to terminal for debugging
+        print(f"\n📋 [AGENT SUMMARY] {len(actual_sqls)} SQL query/queries executed for: '{req.message[:80]}'")
 
         response_event = {"type": "response", "content": final_response}
         if plotly_json:
             response_event["plotly_json"] = plotly_json
+
+        # Optional: send token count to frontend so it can be rendered
+        if total_tokens_used > 0:
+            response_event["tokens"] = total_tokens_used
+
         yield f"data: {json.dumps(response_event)}\n\n"
         yield 'data: {"type": "done"}\n\n'
 
@@ -272,18 +510,18 @@ async def get_chat_suggestions(context: str = None):
     Generates 4 dynamic business questions using the LLM.
     If 'context' is provided (e.g., the last user message), it generates
     follow-up questions. Otherwise, it generates general 
-    exploratory questions based on the schema.
+    exploratory questions based on the live database schema.
     """
     global _cached_general_suggestions
     from tools.sql_tool import get_schema, get_db_index
     from agent import llm
     
-    # Return cache if no context is provided and cache exists
+    # Return cache only if no context — regenerate fresh on each startup
     if not context and _cached_general_suggestions:
         return {"suggestions": _cached_general_suggestions}
 
     schema = get_schema()
-    db_index = get_db_index()
+    db_index = get_db_index()   # Full list of ALL table names in the DB
 
     if context:
         prompt = f"""
@@ -298,13 +536,17 @@ CORE SCHEMA:
 """
     else:
         prompt = f"""
-You are a Senior Data Analyst. Based on the database schema below, 
-generate exactly 4 highly insightful, distinct business questions an executive would want to ask.
-Focus on revenue, profit margins, anomalies, and top performers.
+You are a Senior Data Analyst. The database below contains these tables.
+Generate exactly 4 highly insightful, distinct business questions an executive would 
+want to ask SPECIFICALLY about this data. Reference real table/column names where helpful.
+Focus on revenue trends, top performers, category breakdowns, and anomalies.
 CRITICAL: Keep EACH question very short and punchy (under 10 words).
 Return ONLY a valid JSON array of 4 strings. No markdown formatting or extra text.
 
-CORE SCHEMA:
+AVAILABLE TABLES:
+{db_index}
+
+CORE SCHEMA (sample columns):
 {schema}
 """
 
@@ -323,12 +565,12 @@ CORE SCHEMA:
         print("Suggestion generation failed:", e)
         pass
 
-    # Fallback if LLM fails
+    # Fallback — generic but still useful
     fallback = [
-        "What are the top 5 products by profit?",
-        "Show total sales by region as a bar chart",
-        "Plot revenue over time as a line chart",
-        "Which product category has the highest profit margin?"
+        "What are the top 5 products by revenue?",
+        "Show total orders by category as a bar chart",
+        "Which customers have the highest lifetime value?",
+        "Plot monthly sales trend as a line chart"
     ]
     return {"suggestions": fallback}
 
@@ -359,29 +601,8 @@ async def upload_policy(file: UploadFile = File(...)):
 @app.post("/api/policy/rebuild-vectordb")
 def rebuild_vector_db():
     try:
-        _build_vector_store()
+        _build_and_get_vector_store()
         return {"success": True}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-# ═══════════════════════════════════════════════
-# 3b. HYBRID SEARCH
-# ═══════════════════════════════════════════════
-
-class HybridSearchRequest(BaseModel):
-    query: str
-
-@app.post("/api/hybrid-search")
-def hybrid_search(req: HybridSearchRequest):
-    """
-    Fires SQL (NL→SQL→execute) and RAG (ChromaDB similarity search)
-    concurrently, then synthesizes results with Gemini.
-    Returns structured JSON with both result lanes plus an AI insight.
-    """
-    try:
-        from tools.hybrid_tool import run_hybrid_search
-        result = run_hybrid_search(req.query)
-        return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -400,7 +621,8 @@ def generate_dashboard_chart(
         query = f"SELECT {x_col}, {aggregation}({y_col}) AS {y_col} FROM {table} GROUP BY {x_col} ORDER BY {y_col} DESC LIMIT {limit}"
     else:
         query = f"SELECT {x_col}, {y_col} FROM {table} LIMIT {limit}"
-    df = pd.read_sql(query, engine)
+    from sqlalchemy import text
+    df = pd.read_sql(text(query), engine)
     if df.empty:
         raise HTTPException(status_code=404, detail="Query returned no data.")
     title = f"{aggregation} of {y_col} by {x_col}" if aggregation != "None" else f"{y_col} by {x_col}"
@@ -479,8 +701,7 @@ def generate_report():
             if ext in (".html", ".htm"):
                 with open(path, "r", encoding="utf-8", errors="ignore") as f:
                     content = f.read()
-                b64 = base64.b64encode(content.encode("utf-8")).decode("utf-8")
-                return f"data:text/html;base64,{b64}"
+                return f"data:text/html;charset=utf-8,{urllib.parse.quote(content)}"
             elif ext == ".png":
                 with open(path, "rb") as f:
                     content = f.read()
@@ -552,9 +773,11 @@ def email_report(req: EmailReportRequest):
 # 6. SCHEDULER
 # ═══════════════════════════════════════════════
 
+import sys as _sys
 TASK_NAME = "AI_Executive_Sales_Report"
 SCRIPT_PATH = str(config.BASE_DIR / "scripts" / "cron_report_sender.py")
-PYTHON_PATH = str(config.BASE_DIR / "venv" / "Scripts" / "python.exe")
+# Always use the same Python interpreter that is running uvicorn right now
+PYTHON_PATH = _sys.executable
 
 @app.get("/api/scheduler/status")
 def get_scheduler_status():
@@ -574,21 +797,29 @@ def get_scheduler_status():
 
 @app.post("/api/scheduler/update")
 def update_scheduler(req: ScheduleRequest):
-    # On Windows, schtasks /TR needs specific quoting to handle spaces and arguments together.
-    # We use a single string with internal escaped quotes for the task run command.
-    tr_command = f'\\"{PYTHON_PATH}\\" \\"{SCRIPT_PATH}\\" {req.recipient_email}'
-
-    cmd = (
-        ["schtasks", "/delete", "/tn", TASK_NAME, "/f"] if not req.enabled else
-        ["schtasks", "/create", "/tn", TASK_NAME,
-         "/tr", tr_command,
-         "/sc", "DAILY", "/st", req.time_str, "/f"]
-    )
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        if not req.enabled:
+            # Just delete the task
+            result = subprocess.run(
+                f'schtasks /delete /tn "{TASK_NAME}" /f',
+                capture_output=True, text=True, timeout=10, shell=True
+            )
+        else:
+            if not req.recipient_email:
+                raise HTTPException(status_code=400, detail="Recipient email is required.")
+            # Build the full command as a single quoted string for shell=True
+            # schtasks requires: /TR "\"path\" \"script\" arg"
+            tr_inner = f'\\"{PYTHON_PATH}\\" \\"{SCRIPT_PATH}\\" {req.recipient_email}'
+            shell_cmd = f'schtasks /create /tn "{TASK_NAME}" /tr "{tr_inner}" /sc DAILY /st {req.time_str} /f'
+            result = subprocess.run(
+                shell_cmd,
+                capture_output=True, text=True, timeout=10, shell=True
+            )
         if result.returncode == 0:
-            return {"success": True}
-        raise HTTPException(status_code=500, detail=result.stderr or result.stdout)
+            return {"success": True, "message": "Scheduler updated successfully."}
+        raise HTTPException(status_code=500, detail=(result.stderr or result.stdout).strip())
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -621,6 +852,39 @@ def send_report_now(recipient_email: str = Form(...)):
 # 7. STAR SCHEMA
 # ═══════════════════════════════════════════════
 
+@app.get("/api/schema/tables", response_model=list[TableMetaOut])
+def get_schema_tables():
+    try:
+        engine = get_engine()
+        from sqlalchemy import text
+        with engine.connect() as conn:
+            res = conn.execute(text("SELECT table_name, description, updated_at FROM table_embeddings ORDER BY table_name"))
+            rows = res.fetchall()
+        
+        out = []
+        for r in rows:
+            updated_at_str = r[2].isoformat() if r[2] else None
+            out.append(TableMetaOut(table_name=r[0], description=r[1], updated_at=updated_at_str))
+        return out
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/schema/sync")
+def trigger_schema_sync():
+    try:
+        from scripts.sync_schema import sync_schema
+        from scripts.embed_schema import sync_embeddings
+        sync_schema()
+        counts = sync_embeddings()
+        return {
+            "success": True,
+            "tables_added": counts.get("embedded", 0),
+            "tables_updated": counts.get("embedded", 0),
+            "tables_skipped": counts.get("skipped", 0)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 METADATA_PATH = config.DATA_DIR / "schema_metadata.json"
 
 @app.get("/api/schema/relationships")
@@ -636,9 +900,15 @@ def auto_map_relationships():
     from agent import llm
     import sqlalchemy
 
-    # ── Bust the schema cache so newly-added tables are picked up ──
+    # ── Bust ALL caches so newly-added/removed tables are always picked up fresh ──
     import tools.sql_tool as sql_mod
     sql_mod._schema_cache = None
+    sql_mod._db_index_cache = None
+
+    # Wipe the saved relationships — we'll rebuild from scratch with the current schema
+    if METADATA_PATH.exists():
+        with open(METADATA_PATH, "w") as f:
+            json.dump({"relationships": []}, f)
 
     schema = get_schema()
 

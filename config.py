@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 # 1. LOAD ENVIRONMENT VARIABLES
 # ═══════════════════════════════════════════════════════════════
 
-BASE_DIR = Path("C:/SEM5/SYS_project")   # ← update if your project root changes
+BASE_DIR = Path(__file__).resolve().parent   # always points to this file's directory
 load_dotenv(dotenv_path=BASE_DIR / ".env")
 
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
@@ -31,7 +31,6 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 DATA_DIR        = BASE_DIR / "data"
 DOCS_DIR        = BASE_DIR / "docs"
-VECTOR_STORE_DIR = BASE_DIR / "vector_store"
 OUTPUTS_DIR     = BASE_DIR / "outputs"
 
 # ─── DEFAULT DATABASE ──────────────────────────────────────────
@@ -40,7 +39,7 @@ import urllib.parse
 # 1. Try to load Supabase Cloud DB from environment
 supabase_url = os.getenv("SUPABASE_DB_URL", "").strip()
 
-if supabase_url and "supabase.co" in supabase_url:
+if supabase_url and ("supabase.co" in supabase_url or "supabase.com" in supabase_url):
     IS_CLOUD = True
     # Parse to safely URL encode password
     prefix = supabase_url.split("://")[0] + "://"
@@ -68,13 +67,40 @@ else:
     DB_PATH = DATA_DIR / "sales_normalized_1_1.db"
     DB_URI = f"sqlite:///{DB_PATH}"
 
+# ─── NEW RETAIL SUPABASE PROJECT ──────────────────────────────
+# Read from NEW_SUPABASE_DB_URL in .env
+# Format: postgresql://user:password@host:port/db
+_new_url = os.getenv("NEW_SUPABASE_DB_URL", "").strip()
+
+if _new_url:
+    _parsed   = urllib.parse.urlparse(_new_url)
+    _new_pw   = urllib.parse.quote_plus(_parsed.password or "")
+    NEW_SUPABASE_DB_URI = (
+        f"postgresql://{_parsed.username}:{_new_pw}"
+        f"@{_parsed.hostname}:{_parsed.port}{_parsed.path}"
+        f"?sslmode=require"
+    )
+    NEW_SUPABASE_DB_PARAMS = dict(
+        host=_parsed.hostname,
+        port=_parsed.port or 5432,
+        dbname=_parsed.path.lstrip("/"),
+        user=_parsed.username,
+        password=_parsed.password,
+        sslmode="require",
+        connect_timeout=30,
+    )
+else:
+    NEW_SUPABASE_DB_URI    = None
+    NEW_SUPABASE_DB_PARAMS = {}
+
 # ═══════════════════════════════════════════════════════════════
 # 3. MODEL & EMBEDDING SETTINGS
 # ═══════════════════════════════════════════════════════════════
 
-MODEL_NAME      = "gemini-2.5-flash"      # Google Gemini model ID
-EMBEDDING_MODEL = "all-MiniLM-L6-v2"      # HuggingFace sentence-transformers (local, free)
-MAX_RETRIES     = 3                        # Max SQL self-correction attempts
+MODEL_NAME         = "gemini-2.5-flash"            # Google Gemini model ID
+EMBEDDING_MODEL    = "models/gemini-embedding-001"  # Google Gemini Embedding API
+EMBEDDING_DIMENSIONS = 1536                         # MRL output dims (3072 default, 1536 balanced, 768 compact)
+MAX_RETRIES        = 3                              # Max SQL self-correction attempts
 
 # ═══════════════════════════════════════════════════════════════
 # 3.1 EMAIL SETTINGS
@@ -90,7 +116,7 @@ RECIPIENT_EMAIL  = os.getenv("RECIPIENT_EMAIL",  "")
 # 4. AUTO-CREATE DIRECTORIES
 # ═══════════════════════════════════════════════════════════════
 
-for directory in [DATA_DIR, DOCS_DIR, VECTOR_STORE_DIR, OUTPUTS_DIR]:
+for directory in [DATA_DIR, DOCS_DIR, OUTPUTS_DIR]:
     directory.mkdir(parents=True, exist_ok=True)
 
 # ═══════════════════════════════════════════════════════════════
@@ -115,6 +141,11 @@ SMTP_PORT=587
 SENDER_EMAIL=you@gmail.com
 SENDER_PASSWORD=your_app_password
 RECIPIENT_EMAIL=manager@company.com
+
+# Optional — LangSmith Observability for tracing LLM execution
+LANGCHAIN_TRACING_V2=true
+LANGCHAIN_ENDPOINT="https://api.smith.langchain.com"
+LANGCHAIN_API_KEY=your_langsmith_api_key
 """
 
 with open(_env_example_path, "w", encoding="utf-8") as f:

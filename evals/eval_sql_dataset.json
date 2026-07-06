@@ -1,0 +1,130 @@
+[
+  {
+    "question": "For each product category, find the single product that generated the highest total revenue. Show the category name, product ID, and its total revenue.",
+    "expected_sql": "WITH product_revenue AS (SELECT p.category_id, p.product_id, SUM(oi.price * oi.qty) AS total_revenue FROM products p JOIN order_items oi ON p.product_id = oi.product_id GROUP BY p.category_id, p.product_id), ranked AS (SELECT pr.category_id, pr.product_id, pr.total_revenue, ROW_NUMBER() OVER (PARTITION BY pr.category_id ORDER BY pr.total_revenue DESC) AS rn FROM product_revenue pr) SELECT c.category_name, r.product_id, r.total_revenue FROM ranked r JOIN categories c ON r.category_id = c.category_id WHERE r.rn = 1"
+  },
+  {
+    "question": "Calculate the month-over-month percentage change in total number of orders for the year 2023. Show the month, order count, and growth percentage compared to the previous month.",
+    "expected_sql": "WITH monthly_orders AS (SELECT EXTRACT(MONTH FROM order_date) AS month, COUNT(order_id) AS order_count FROM orders WHERE EXTRACT(YEAR FROM order_date) = 2023 GROUP BY month) SELECT month, order_count, ROUND(100.0 * (order_count - LAG(order_count) OVER (ORDER BY month)) / NULLIF(LAG(order_count) OVER (ORDER BY month), 0), 2) AS pct_change FROM monthly_orders ORDER BY month"
+  },
+  {
+    "question": "Find the top 5 customers by net revenue, where net revenue is total payments minus total refunds. Show customer ID, city, total payments, total refunds, and net revenue.",
+    "expected_sql": "WITH customer_payments AS (SELECT o.customer_id, SUM(pay.amount) AS total_paid FROM orders o JOIN payments pay ON o.order_id = pay.order_id GROUP BY o.customer_id), customer_refunds AS (SELECT o.customer_id, SUM(r.refund) AS total_refunded FROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN returns r ON oi.order_item_id = r.order_item_id GROUP BY o.customer_id) SELECT c.customer_id, c.city, COALESCE(cp.total_paid, 0) AS total_payments, COALESCE(cr.total_refunded, 0) AS total_refunds, COALESCE(cp.total_paid, 0) - COALESCE(cr.total_refunded, 0) AS net_revenue FROM customers c LEFT JOIN customer_payments cp ON c.customer_id = cp.customer_id LEFT JOIN customer_refunds cr ON c.customer_id = cr.customer_id ORDER BY net_revenue DESC LIMIT 5"
+  },
+  {
+    "question": "Find all product categories where the return rate (number of returned order items divided by total items sold) exceeds 10%. Show category name, total items sold, total returns, and return rate percentage.",
+    "expected_sql": "SELECT c.category_name, SUM(oi.qty) AS total_items_sold, COUNT(r.return_id) AS total_returns, ROUND(100.0 * COUNT(r.return_id) / NULLIF(SUM(oi.qty), 0), 2) AS return_rate_pct FROM categories c JOIN products p ON c.category_id = p.category_id JOIN order_items oi ON p.product_id = oi.product_id LEFT JOIN returns r ON oi.order_item_id = r.order_item_id GROUP BY c.category_name HAVING ROUND(100.0 * COUNT(r.return_id) / NULLIF(SUM(oi.qty), 0), 2) > 10 ORDER BY return_rate_pct DESC"
+  },
+  {
+    "question": "Rank all stores by their total revenue. For each store show the city, total revenue, rank, and what percentage of the overall total revenue that store contributes.",
+    "expected_sql": "WITH store_revenue AS (SELECT s.store_id, s.city, SUM(oi.price * oi.qty) AS total_revenue FROM stores s JOIN orders o ON s.store_id = o.store_id JOIN order_items oi ON o.order_id = oi.order_id GROUP BY s.store_id, s.city), total AS (SELECT SUM(total_revenue) AS grand_total FROM store_revenue) SELECT sr.city, sr.total_revenue, RANK() OVER (ORDER BY sr.total_revenue DESC) AS revenue_rank, ROUND(100.0 * sr.total_revenue / t.grand_total, 2) AS revenue_pct FROM store_revenue sr, total t ORDER BY revenue_rank"
+  },
+  {
+    "question": "Find all customers who have exclusively placed orders that had a promotion applied — meaning they have never placed an order without a promotion. Show customer ID and city.",
+    "expected_sql": "SELECT c.customer_id, c.city FROM customers c WHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.customer_id = c.customer_id AND o.promotion_id IS NULL) AND EXISTS (SELECT 1 FROM orders o WHERE o.customer_id = c.customer_id)"
+  },
+  {
+    "question": "For each supplier country, calculate total revenue and total refunds. Show only countries where total refunds exceed 20% of total revenue. Display country, total revenue, total refunds, and refund ratio as a percentage.",
+    "expected_sql": "WITH supplier_stats AS (SELECT s.country, SUM(oi.price * oi.qty) AS total_revenue, COALESCE(SUM(r.refund), 0) AS total_refunds FROM suppliers s JOIN products p ON s.supplier_id = p.supplier_id JOIN order_items oi ON p.product_id = oi.product_id LEFT JOIN returns r ON oi.order_item_id = r.order_item_id GROUP BY s.country) SELECT country, total_revenue, total_refunds, ROUND(100.0 * total_refunds / NULLIF(total_revenue, 0), 2) AS refund_ratio_pct FROM supplier_stats WHERE total_refunds > 0.20 * total_revenue ORDER BY refund_ratio_pct DESC"
+  },
+  {
+    "question": "Divide all employees in each store city into 4 salary quartiles (1 = lowest, 4 = highest) within their city. Show each employee's ID, store city, salary, and their salary quartile.",
+    "expected_sql": "SELECT e.employee_id, s.city, e.salary, NTILE(4) OVER (PARTITION BY s.city ORDER BY e.salary) AS salary_quartile FROM employees e JOIN stores s ON e.store_id = s.store_id ORDER BY s.city, salary_quartile, e.salary"
+  },
+  {
+    "question": "Calculate the cumulative running total of orders placed each month in 2023. Show the month number, the count of orders that month, and the running cumulative total up to that month.",
+    "expected_sql": "WITH monthly AS (SELECT EXTRACT(MONTH FROM order_date) AS month, COUNT(order_id) AS monthly_count FROM orders WHERE EXTRACT(YEAR FROM order_date) = 2023 GROUP BY month) SELECT month, monthly_count, SUM(monthly_count) OVER (ORDER BY month ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS running_total FROM monthly ORDER BY month"
+  },
+  {
+    "question": "Compare the average order payment amount for orders placed with a promotion versus without a promotion. Show the promotion status label, average order value rounded to 2 decimal places, and total order count for each group.",
+    "expected_sql": "SELECT CASE WHEN o.promotion_id IS NOT NULL THEN 'With Promotion' ELSE 'Without Promotion' END AS promotion_status, ROUND(AVG(pay.amount), 2) AS avg_order_value, COUNT(o.order_id) AS order_count FROM orders o JOIN payments pay ON o.order_id = pay.order_id GROUP BY CASE WHEN o.promotion_id IS NOT NULL THEN 'With Promotion' ELSE 'Without Promotion' END"
+  },
+  {
+    "question": "Calculate the median salary of employees for each store city.",
+    "expected_sql": "SELECT s.city, PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY e.salary) AS median_salary FROM employees e JOIN stores s ON e.store_id = s.store_id GROUP BY s.city ORDER BY median_salary DESC"
+  },
+  {
+    "question": "Find all products whose price is above the average price of all products in their own category. Show the product ID, its price, and the category name.",
+    "expected_sql": "SELECT p.product_id, p.price, c.category_name FROM products p JOIN categories c ON p.category_id = c.category_id WHERE p.price > (SELECT AVG(p2.price) FROM products p2 WHERE p2.category_id = p.category_id) ORDER BY c.category_name, p.price DESC"
+  },
+  {
+    "question": "Compare total orders placed in 2022 vs 2023 and calculate the year-over-year percentage growth.",
+    "expected_sql": "SELECT SUM(CASE WHEN EXTRACT(YEAR FROM order_date) = 2022 THEN 1 ELSE 0 END) AS orders_2022, SUM(CASE WHEN EXTRACT(YEAR FROM order_date) = 2023 THEN 1 ELSE 0 END) AS orders_2023, ROUND(100.0 * (SUM(CASE WHEN EXTRACT(YEAR FROM order_date) = 2023 THEN 1 ELSE 0 END) - SUM(CASE WHEN EXTRACT(YEAR FROM order_date) = 2022 THEN 1 ELSE 0 END)) / NULLIF(SUM(CASE WHEN EXTRACT(YEAR FROM order_date) = 2022 THEN 1 ELSE 0 END), 0), 2) AS yoy_growth_pct FROM orders"
+  },
+  {
+    "question": "Find all store cities that have never had any returns on orders placed from their store.",
+    "expected_sql": "SELECT s.city FROM stores s WHERE s.store_id NOT IN (SELECT DISTINCT o.store_id FROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN returns r ON oi.order_item_id = r.order_item_id)"
+  },
+  {
+    "question": "Calculate the revenue contribution percentage of each product category to the overall total revenue. Show category name, total revenue, and percentage.",
+    "expected_sql": "WITH category_revenue AS (SELECT c.category_name, SUM(oi.price * oi.qty) AS total_revenue FROM categories c JOIN products p ON c.category_id = p.category_id JOIN order_items oi ON p.product_id = oi.product_id GROUP BY c.category_name), grand_total AS (SELECT SUM(total_revenue) AS overall FROM category_revenue) SELECT cr.category_name, cr.total_revenue, ROUND(100.0 * cr.total_revenue / gt.overall, 2) AS revenue_pct FROM category_revenue cr, grand_total gt ORDER BY revenue_pct DESC"
+  },
+  {
+    "question": "Find all customers who placed orders in at least 3 different months during 2023. Show the customer ID, city, and the count of active months.",
+    "expected_sql": "SELECT c.customer_id, c.city, COUNT(DISTINCT EXTRACT(MONTH FROM o.order_date)) AS active_months FROM customers c JOIN orders o ON c.customer_id = o.customer_id WHERE EXTRACT(YEAR FROM o.order_date) = 2023 GROUP BY c.customer_id, c.city HAVING COUNT(DISTINCT EXTRACT(MONTH FROM o.order_date)) >= 3 ORDER BY active_months DESC"
+  },
+  {
+    "question": "Find the store city with the second highest total revenue.",
+    "expected_sql": "WITH store_revenue AS (SELECT s.city, SUM(oi.price * oi.qty) AS total_revenue FROM stores s JOIN orders o ON s.store_id = o.store_id JOIN order_items oi ON o.order_id = oi.order_id GROUP BY s.city), ranked AS (SELECT city, total_revenue, DENSE_RANK() OVER (ORDER BY total_revenue DESC) AS rnk FROM store_revenue) SELECT city, total_revenue FROM ranked WHERE rnk = 2"
+  },
+  {
+    "question": "For each store city, calculate the ratio of total payments received to total revenue generated from order items. Show city, total payments, total revenue, and the ratio rounded to 4 decimal places.",
+    "expected_sql": "WITH store_payments AS (SELECT s.city, SUM(pay.amount) AS total_payments FROM stores s JOIN orders o ON s.store_id = o.store_id JOIN payments pay ON o.order_id = pay.order_id GROUP BY s.city), store_revenue AS (SELECT s.city, SUM(oi.price * oi.qty) AS total_revenue FROM stores s JOIN orders o ON s.store_id = o.store_id JOIN order_items oi ON o.order_id = oi.order_id GROUP BY s.city) SELECT sp.city, sp.total_payments, sr.total_revenue, ROUND(sp.total_payments / NULLIF(sr.total_revenue, 0), 4) AS payment_revenue_ratio FROM store_payments sp JOIN store_revenue sr ON sp.city = sr.city ORDER BY payment_revenue_ratio DESC"
+  },
+  {
+    "question": "Find all products that have been ordered by customers from more than 3 different cities. Show the product ID and the distinct city count.",
+    "expected_sql": "SELECT p.product_id, COUNT(DISTINCT c.city) AS city_count FROM products p JOIN order_items oi ON p.product_id = oi.product_id JOIN orders o ON oi.order_id = o.order_id JOIN customers c ON o.customer_id = c.customer_id GROUP BY p.product_id HAVING COUNT(DISTINCT c.city) > 3 ORDER BY city_count DESC"
+  },
+  {
+    "question": "For each month of 2023, identify which product category generated the highest sales revenue. Show the month, category name, and total sales.",
+    "expected_sql": "WITH monthly_category_sales AS (SELECT EXTRACT(MONTH FROM o.order_date) AS month, c.category_name, SUM(oi.price * oi.qty) AS total_sales FROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN products p ON oi.product_id = p.product_id JOIN categories c ON p.category_id = c.category_id WHERE EXTRACT(YEAR FROM o.order_date) = 2023 GROUP BY month, c.category_name), ranked AS (SELECT month, category_name, total_sales, ROW_NUMBER() OVER (PARTITION BY month ORDER BY total_sales DESC) AS rn FROM monthly_category_sales) SELECT month, category_name, total_sales FROM ranked WHERE rn = 1 ORDER BY month"
+  },
+  {
+    "question": "Find customers whose very first order ever placed used a promotion. Show the customer ID and city.",
+    "expected_sql": "WITH first_orders AS (SELECT customer_id, MIN(order_date) AS first_order_date FROM orders GROUP BY customer_id) SELECT c.customer_id, c.city FROM customers c JOIN first_orders fo ON c.customer_id = fo.customer_id JOIN orders o ON c.customer_id = o.customer_id AND o.order_date = fo.first_order_date WHERE o.promotion_id IS NOT NULL"
+  },
+  {
+    "question": "Find all employees who earn more than the average salary of all employees in their own store city. Show employee ID, city, their salary, and the city average salary.",
+    "expected_sql": "WITH city_avg AS (SELECT s.city, AVG(e.salary) AS avg_salary FROM employees e JOIN stores s ON e.store_id = s.store_id GROUP BY s.city) SELECT e.employee_id, s.city, e.salary, ROUND(ca.avg_salary, 2) AS city_avg_salary FROM employees e JOIN stores s ON e.store_id = s.store_id JOIN city_avg ca ON s.city = ca.city WHERE e.salary > ca.avg_salary ORDER BY s.city, e.salary DESC"
+  },
+  {
+    "question": "Calculate the total revenue lost to refunds for each supplier country. Show the country and the total refund amount, ordered from highest to lowest.",
+    "expected_sql": "SELECT s.country, SUM(r.refund) AS total_refunds_lost FROM suppliers s JOIN products p ON s.supplier_id = p.supplier_id JOIN order_items oi ON p.product_id = oi.product_id JOIN returns r ON oi.order_item_id = r.order_item_id GROUP BY s.country ORDER BY total_refunds_lost DESC"
+  },
+  {
+    "question": "Find all store cities where every single order placed from that store had a promotion applied. Show only cities that have at least one order.",
+    "expected_sql": "SELECT DISTINCT s.city FROM stores s WHERE EXISTS (SELECT 1 FROM orders o WHERE o.store_id = s.store_id) AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.store_id = s.store_id AND o.promotion_id IS NULL)"
+  },
+  {
+    "question": "For each store city, calculate the average number of items (total quantity) per order. Show the city and the average rounded to 2 decimal places.",
+    "expected_sql": "WITH order_totals AS (SELECT oi.order_id, SUM(oi.qty) AS total_items FROM order_items oi GROUP BY oi.order_id) SELECT s.city, ROUND(AVG(ot.total_items), 2) AS avg_items_per_order FROM stores s JOIN orders o ON s.store_id = o.store_id JOIN order_totals ot ON o.order_id = ot.order_id GROUP BY s.city ORDER BY avg_items_per_order DESC"
+  },
+  {
+    "question": "For each customer city, find the most recent order date and calculate the total revenue generated on that specific date in that city.",
+    "expected_sql": "WITH latest_per_city AS (SELECT c.city, MAX(o.order_date) AS latest_date FROM customers c JOIN orders o ON c.customer_id = o.customer_id GROUP BY c.city) SELECT lpc.city, lpc.latest_date, SUM(oi.price * oi.qty) AS revenue_on_latest_date FROM latest_per_city lpc JOIN customers c ON c.city = lpc.city JOIN orders o ON c.customer_id = o.customer_id AND o.order_date = lpc.latest_date JOIN order_items oi ON o.order_id = oi.order_id GROUP BY lpc.city, lpc.latest_date ORDER BY lpc.latest_date DESC"
+  },
+  {
+    "question": "Find all product categories for which not a single item has ever been returned. Show the category name.",
+    "expected_sql": "SELECT c.category_name FROM categories c WHERE NOT EXISTS (SELECT 1 FROM products p JOIN order_items oi ON p.product_id = oi.product_id JOIN returns r ON oi.order_item_id = r.order_item_id WHERE p.category_id = c.category_id)"
+  },
+  {
+    "question": "For each store city, calculate the ratio of delivered shipments to non-delivered shipments. Show city, delivered count, non-delivered count, and the delivery ratio rounded to 2 decimal places.",
+    "expected_sql": "SELECT s.city, SUM(CASE WHEN sh.status = 'delivered' THEN 1 ELSE 0 END) AS delivered, SUM(CASE WHEN sh.status != 'delivered' THEN 1 ELSE 0 END) AS not_delivered, ROUND(1.0 * SUM(CASE WHEN sh.status = 'delivered' THEN 1 ELSE 0 END) / NULLIF(SUM(CASE WHEN sh.status != 'delivered' THEN 1 ELSE 0 END), 0), 2) AS delivery_ratio FROM stores s JOIN orders o ON s.store_id = o.store_id JOIN shipments sh ON o.order_id = sh.order_id GROUP BY s.city ORDER BY delivery_ratio DESC"
+  },
+  {
+    "question": "Find all customers who have placed at least one order but have never had any of their order items returned. Show customer ID and city.",
+    "expected_sql": "SELECT c.customer_id, c.city FROM customers c WHERE EXISTS (SELECT 1 FROM orders o WHERE o.customer_id = c.customer_id) AND NOT EXISTS (SELECT 1 FROM orders o JOIN order_items oi ON o.order_id = oi.order_id JOIN returns r ON oi.order_item_id = r.order_item_id WHERE o.customer_id = c.customer_id)"
+  },
+  {
+    "question": "For each quarter of 2023 (Q1=Jan-Mar, Q2=Apr-Jun, Q3=Jul-Sep, Q4=Oct-Dec), show total revenue, total refunds, and net revenue (revenue minus refunds).",
+    "expected_sql": "SELECT CASE WHEN EXTRACT(MONTH FROM o.order_date) BETWEEN 1 AND 3 THEN 'Q1' WHEN EXTRACT(MONTH FROM o.order_date) BETWEEN 4 AND 6 THEN 'Q2' WHEN EXTRACT(MONTH FROM o.order_date) BETWEEN 7 AND 9 THEN 'Q3' ELSE 'Q4' END AS quarter, SUM(oi.price * oi.qty) AS total_revenue, COALESCE(SUM(r.refund), 0) AS total_refunds, SUM(oi.price * oi.qty) - COALESCE(SUM(r.refund), 0) AS net_revenue FROM orders o JOIN order_items oi ON o.order_id = oi.order_id LEFT JOIN returns r ON oi.order_item_id = r.order_item_id WHERE EXTRACT(YEAR FROM o.order_date) = 2023 GROUP BY quarter ORDER BY quarter"
+  },
+  {
+    "question": "Calculate a rolling 3-month average of monthly order counts for the year 2023. Show month, that month's order count, and the 3-month rolling average.",
+    "expected_sql": "WITH monthly_orders AS (SELECT EXTRACT(MONTH FROM order_date) AS month, COUNT(order_id) AS order_count FROM orders WHERE EXTRACT(YEAR FROM order_date) = 2023 GROUP BY month) SELECT month, order_count, ROUND(AVG(order_count) OVER (ORDER BY month ROWS BETWEEN 2 PRECEDING AND CURRENT ROW), 2) AS rolling_3m_avg FROM monthly_orders ORDER BY month"
+  },
+  {
+    "question": "What is the customer churn rate? A customer is considered churned if they have not placed any order in the 3 months before the most recent order date in the database. Show total customers, churned customers, and churn rate percentage.",
+    "expected_sql": "WITH LatestDate AS (SELECT MAX(order_date) AS max_date FROM orders), ChurnedCustomers AS (SELECT c.customer_id FROM customers c LEFT JOIN orders o ON c.customer_id = o.customer_id GROUP BY c.customer_id HAVING MAX(o.order_date) < (SELECT max_date FROM LatestDate) - INTERVAL '3 months' OR MAX(o.order_date) IS NULL) SELECT (SELECT COUNT(*) FROM customers) AS total_customers, COUNT(*) AS churned_customers, ROUND(100.0 * COUNT(*) / NULLIF((SELECT COUNT(*) FROM customers), 0), 2) AS churn_rate_pct FROM ChurnedCustomers"
+  }
+]

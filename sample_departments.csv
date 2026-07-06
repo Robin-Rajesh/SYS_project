@@ -1,0 +1,9 @@
+id,department_name,location,budget,manager_name
+1,Engineering,New York,500000.00,Alice Smith
+2,Marketing,San Francisco,250000.50,Bob Jones
+3,Sales,Chicago,300000.00,Charlie Brown
+4,Human Resources,New York,150000.00,Diana Prince
+5,Customer Support,Austin,125000.00,Evan Davis
+6,Finance,San Francisco,400000.00,Fiona Gallagher
+7,IT Operations,Austin,200000.00,George Costanza
+8,Legal,Chicago,350000.00,Harvey Specter

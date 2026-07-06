@@ -1,0 +1,80 @@
+﻿=== Sheet: Phase 1 ===
+('  AI Analytics Portal ù Phase 1: Revised Architecture   |   56 sub-tasks  ╖  7 completed  ╖  19 May û 6 Jun 2026', None, None, None, None, None, None, None, None, None, None, None)
+('#', 'Module', 'Sub Module', 'Feature Detail', 'Task', 'Sub Task', 'Status', 'Hrs', 'Resource', 'Start', 'End', 'Notes')
+(1, 'Frontend', 'Analytics Portal', 'Layout & Shell', 'Build Analytics Portal shell', 'Create AnalyticsLayout.jsx with sidebar, top nav and route slots', 'Completed', 1, 'Robin', '19-May-2026', '19-May-2026', None)
+(2, None, None, None, None, 'Add Dashboard, Data Explorer and Chat route placeholders', 'Completed', 0.5, 'Robin', '19-May-2026', '19-May-2026', None)
+(3, None, None, 'Chat UI', 'Build Chat interface', 'Create ChatPage.jsx with message list, input bar and send button', 'Completed', 1.5, 'Robin', '19-May-2026', '19-May-2026', None)
+(4, None, None, None, None, 'Wire SSE stream to chat message list ù render tokens as they arrive', 'Completed', 1, 'Robin', '19-May-2026', '19-May-2026', 'SSE contract unchanged ù backend swap is transparent')
+(5, None, None, None, None, 'Add loading spinner and error state for failed stream', 'Completed', 0.5, 'Robin', '19-May-2026', '19-May-2026', None)
+(6, None, None, 'Data Explorer', 'Build Data Explorer page', 'Create DataExplorer.jsx with table list panel and description sidebar', 'Completed', 1, 'Robin', '19-May-2026', '19-May-2026', None)
+(7, None, None, None, None, 'Add empty state and skeleton loader for table list', 'Completed', 0.5, 'Robin', '19-May-2026', '19-May-2026', None)
+(8, 'Infrastructure', 'Supabase Setup', 'pgvector', 'Enable pgvector extension', 'Run CREATE EXTENSION IF NOT EXISTS vector; in Supabase SQL editor', 'Not Started', 0.5, 'Robin', '20-May-2026', '20-May-2026', 'One-time Supabase setup')
+(9, None, None, None, None, 'Confirm extension is active in Supabase dashboard extensions tab', 'Not Started', 0.5, 'Robin', '20-May-2026', '20-May-2026', None)
+(10, None, None, 'Vector Table', 'Create table_embeddings table', 'CREATE TABLE table_embeddings (table_name TEXT PRIMARY KEY, description TEXT, embedding VECTOR(384), column_hash TEXT, updated_at TIMESTAMPTZ)', 'Not Started', 1, 'Robin', '20-May-2026', '20-May-2026', '384 dims = all-MiniLM-L6-v2')
+(11, None, None, None, None, 'CREATE INDEX ON table_embeddings USING hnsw (embedding vector_cosine_ops) for fast similarity search', 'Not Started', 0.5, 'Robin', '20-May-2026', '20-May-2026', 'HNSW ù fastest for cosine similarity at this scale')
+(12, None, None, 'FK Table', 'Create schema_relationships table', 'CREATE TABLE schema_relationships (from_table TEXT, to_table TEXT, from_col TEXT, to_col TEXT)', 'Not Started', 0.5, 'Robin', '20-May-2026', '20-May-2026', 'Replaces in-memory dict as persistent FK source')
+(13, None, None, None, None, 'CREATE INDEX ON schema_relationships(from_table) for fast FK lookup at query time', 'Not Started', 0.5, 'Robin', '20-May-2026', '20-May-2026', 'Shared across all cloud instances; survives restarts')
+(14, None, None, 'Cleanup', 'Remove ChromaDB', 'Remove chromadb from requirements.txt', 'Not Started', 0.25, 'Robin', '20-May-2026', '20-May-2026', None)
+(15, None, None, None, None, 'Delete vector_store/ directory from repo and update .gitignore', 'Not Started', 0.25, 'Robin', '20-May-2026', '20-May-2026', None)
+(16, None, None, None, None, 'Remove ChromaDB client init block from config.py', 'Not Started', 0.25, 'Robin', '20-May-2026', '20-May-2026', None)
+(17, None, None, None, None, 'Remove VECTOR_STORE_DIR path reference from all config and env files', 'Not Started', 0.25, 'Robin', '20-May-2026', '20-May-2026', 'Saves ~400MB per deployment')
+(18, 'Core Engine', 'Schema Sync', 'Change Detection', 'MD5 hash check per table', 'On sync: compute MD5 of (column list + FK set) per table', 'Not Started', 1, 'Robin', '21-May-2026', '21-May-2026', 'Prevents unnecessary Gemini API calls on every restart')
+(19, None, None, None, None, 'Compare hash against column_hash stored in table_embeddings', 'Not Started', 0.5, 'Robin', '21-May-2026', '21-May-2026', None)
+(20, None, None, None, None, 'Skip re-embedding if hash unchanged; only process new or modified tables', 'Not Started', 0.5, 'Robin', '21-May-2026', '21-May-2026', None)
+(21, None, None, 'LLM Description', 'Auto-describe tables via Gemini', 'For each new/changed table: send table_name + columns + 3 sample rows to Gemini (temperature=0)', 'Not Started', 1, 'Robin', '21-May-2026', '22-May-2026', 'Temperature=0 for deterministic output')
+(22, None, None, None, None, "Prompt: 'Write a 2-sentence business description of what this table stores.' Store result in table_embeddings.description", 'Not Started', 1, 'Robin', '22-May-2026', '22-May-2026', None)
+(23, None, None, None, None, 'Handle Gemini failures ù fallback to column-list description if API call fails', 'Not Started', 0.5, 'Robin', '22-May-2026', '22-May-2026', None)
+(24, None, None, 'Embedding', 'Embed descriptions with all-MiniLM-L6-v2', 'Run each Gemini-generated description through HuggingFace all-MiniLM-L6-v2 (local, CPU)', 'Not Started', 1, 'Robin', '22-May-2026', '22-May-2026', 'Same model already in project ù no new dependency')
+(25, None, None, None, None, 'Upsert 384-dim vector into table_embeddings.embedding via pgvector', 'Not Started', 0.5, 'Robin', '22-May-2026', '22-May-2026', None)
+(26, None, None, 'FK Persistence', 'Write FK rows to schema_relationships', 'For each table: use SQLAlchemy Inspector to get foreign_keys list', 'Not Started', 0.5, 'Robin', '23-May-2026', '23-May-2026', None)
+(27, None, None, None, None, 'DELETE existing rows for this table then INSERT fresh FK rows to remove stale entries', 'Not Started', 0.5, 'Robin', '23-May-2026', '23-May-2026', None)
+(28, None, None, 'Startup Hook', 'Wire sync_schema.py into FastAPI lifespan', 'Call sync_schema() inside FastAPI @asynccontextmanager lifespan on startup', 'Not Started', 0.5, 'Robin', '23-May-2026', '23-May-2026', 'Fires automatically on every deploy')
+(29, None, None, None, None, 'Log output on startup: tables found, tables updated, tables skipped', 'Not Started', 0.5, 'Robin', '23-May-2026', '23-May-2026', None)
+(30, None, 'Query Pipeline', 'Semantic Retrieval', 'pgvector similarity search', 'Embed user question with all-MiniLM-L6-v2 on each query', 'Not Started', 1, 'Robin', '26-May-2026', '26-May-2026', 'Direct replacement for ChromaDB similarity search')
+(31, None, None, None, None, 'Run: SELECT table_name FROM table_embeddings ORDER BY embedding <=> query_vec LIMIT 10', 'Not Started', 1, 'Robin', '26-May-2026', '26-May-2026', None)
+(32, None, None, None, None, 'Return top-K=10 tables with similarity scores for downstream pruning', 'Not Started', 0.5, 'Robin', '26-May-2026', '27-May-2026', None)
+(33, None, None, 'FK Expansion', 'Load FK dict from Supabase on startup', 'At startup after sync: SELECT * FROM schema_relationships', 'Not Started', 0.5, 'Robin', '27-May-2026', '27-May-2026', 'Persistent source solves multi-instance cloud problem')
+(34, None, None, None, None, 'Build Python dict {table: [neighbor_tables]} and cache on app state object', 'Not Started', 1, 'Robin', '27-May-2026', '27-May-2026', 'In-memory for fast traversal; reloaded from Supabase on each restart')
+(35, None, None, None, '1-hop FK expansion', 'For each table in top-K, look up dict and add FK neighbours to expanded set', 'Not Started', 0.5, 'Robin', '27-May-2026', '27-May-2026', None)
+(36, None, None, None, None, 'Deduplicate expanded set and log final table count', 'Not Started', 0.5, 'Robin', '27-May-2026', '27-May-2026', None)
+(37, None, None, None, None, 'Pass full expanded set to SQL agent as context tables list', 'Not Started', 0.5, 'Robin', '27-May-2026', '27-May-2026', None)
+(38, None, None, 'Pruning', 'Layer 1 similarity threshold filter', 'After FK expansion: drop any added table whose cosine similarity is below 0.30 threshold', 'Not Started', 1, 'Robin', '28-May-2026', '28-May-2026', None)
+(39, None, None, None, None, 'Make threshold configurable via PRUNING_THRESHOLD in .env ù default 0.30', 'Not Started', 0.5, 'Robin', '28-May-2026', '28-May-2026', None)
+python : Traceback (most recent call last):
+At line:1 char:1
++ python -c "
++ ~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Traceback (most recent call last)::String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  File "<string>", line 10, in <module>
+    print(row)
+    ~~~~~^^^^^
+  File "C:\Users\robin\AppData\Local\Programs\Python\Python313\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u2192' in position 105: character maps to <undefined>
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "<string>", line 12, in <module>
+    print(repr(row))
+    ~~~~~^^^^^^^^^^^
+  File "C:\Users\robin\AppData\Local\Programs\Python\Python313\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u2192' in position 105: character maps to <undefined>
+(40, 'Backend', 'REST Endpoints', 'Schema APIs', 'GET /api/schema/tables', 'New endpoint: query table_embeddings, return all tables with description and updated_at', 'Not Started', 1, 'Robin', '28-May-2026', '28-May-2026', None)
+(41, None, None, None, None, 'Add Pydantic response schema TableMetaOut with table_name, description, updated_at fields', 'Not Started', 0.5, 'Robin', '28-May-2026', '28-May-2026', None)
+(42, None, None, None, 'POST /api/schema/sync', 'New endpoint: manually trigger sync_schema() run', 'Not Started', 0.5, 'Robin', '29-May-2026', '29-May-2026', None)
+(43, None, None, None, None, 'Return SyncResult: tables_added, tables_updated, tables_skipped counts', 'Not Started', 0.5, 'Robin', '29-May-2026', '29-May-2026', None)
+(44, None, None, 'Chat API', 'Update POST /api/chat/stream', 'Swap ChromaDB retrieval call for pgvector similarity search function', 'Not Started', 1.5, 'Robin', '29-May-2026', '29-May-2026', None)
+(45, None, None, None, None, 'Swap in-memory dict lookup for FK dict loaded from app state (Supabase-backed)', 'Not Started', 1, 'Robin', '29-May-2026', '29-May-2026', None)
+(46, None, None, None, None, 'Confirm all SSE event types (tool_call, tool_result, response, done, error) still fire correctly', 'Not Started', 1, 'Robin', '29-May-2026', '29-May-2026', None)
+(47, 'QA', 'Schema Sync', 'Sync Test', 'QA ù sync_schema.py', 'Add a test table to Supabase; restart backend', 'Not Started', 0.5, 'Robin', '02-Jun-2026', '02-Jun-2026', None)
+(48, None, None, None, None, 'Verify table appears in table_embeddings with correct description and embedding', 'Not Started', 0.5, 'Robin', '02-Jun-2026', '02-Jun-2026', None)
+(49, None, None, None, None, 'Verify FK rows written correctly to schema_relationships', 'Not Started', 0.5, 'Robin', '02-Jun-2026', '02-Jun-2026', None)
+(50, None, None, None, None, 'Verify unchanged tables are skipped on second restart (check startup logs)', 'Not Started', 0.5, 'Robin', '02-Jun-2026', '02-Jun-2026', None)
+(51, None, 'Query Pipeline', 'Retrieval Test', 'QA ù pgvector similarity search', 'Run 8 representative natural language queries against the live system', 'Not Started', 1, 'Robin', '03-Jun-2026', '03-Jun-2026', None)
+(52, None, None, None, None, 'Verify correct tables in top-K; confirm FK neighbours included for join-heavy queries', 'Not Started', 1, 'Robin', '03-Jun-2026', '03-Jun-2026', None)

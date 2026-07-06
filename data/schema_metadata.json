@@ -2,11 +2,83 @@
     "relationships": [
         {
             "source_db": "postgres",
-            "source_table": "Genre",
-            "source_column": "book_id",
+            "source_table": "langchain_pg_embedding",
+            "source_column": "collection_id",
             "target_db": "postgres",
-            "target_table": "Books",
-            "target_column": "book_id",
+            "target_table": "langchain_pg_collection",
+            "target_column": "uuid",
+            "type": "Many-to-One"
+        },
+        {
+            "source_db": "postgres",
+            "source_table": "returns",
+            "source_column": "order_item_id",
+            "target_db": "postgres",
+            "target_table": "order_items",
+            "target_column": "order_item_id",
+            "type": "Many-to-One"
+        },
+        {
+            "source_db": "postgres",
+            "source_table": "payments",
+            "source_column": "order_id",
+            "target_db": "postgres",
+            "target_table": "orders",
+            "target_column": "order_id",
+            "type": "Many-to-One"
+        },
+        {
+            "source_db": "postgres",
+            "source_table": "shipments",
+            "source_column": "order_id",
+            "target_db": "postgres",
+            "target_table": "orders",
+            "target_column": "order_id",
+            "type": "Many-to-One"
+        },
+        {
+            "source_db": "postgres",
+            "source_table": "order_items",
+            "source_column": "order_id",
+            "target_db": "postgres",
+            "target_table": "orders",
+            "target_column": "order_id",
+            "type": "Many-to-One"
+        },
+        {
+            "source_db": "postgres",
+            "source_table": "order_items",
+            "source_column": "product_id",
+            "target_db": "postgres",
+            "target_table": "products",
+            "target_column": "product_id",
+            "type": "Many-to-One"
+        },
+        {
+            "source_db": "postgres",
+            "source_table": "employees",
+            "source_column": "store_id",
+            "target_db": "postgres",
+            "target_table": "stores",
+            "target_column": "store_id",
+            "type": "Many-to-One"
+        },
+        {
+            "source_db": "postgres",
+            "source_table": "products",
+            "source_column": "category_id",
+            "target_db": "postgres",
+            "target_table": "categories",
+            "target_column": "category_id",
+            "type": "Many-to-One"
+        },
+        {
+            "source_db": "postgres",
+            "source_table": "products",
+            "source_column": "supplier_id",
+            "target_db": "postgres",
+            "target_table": "suppliers",
+            "target_column": "supplier_id",
             "type": "Many-to-One"
         },
         {
@@ -21,37 +93,19 @@
         {
             "source_db": "postgres",
             "source_table": "orders",
-            "source_column": "location_id",
+            "source_column": "store_id",
             "target_db": "postgres",
-            "target_table": "locations",
-            "target_column": "location_id",
+            "target_table": "stores",
+            "target_column": "store_id",
             "type": "Many-to-One"
         },
         {
             "source_db": "postgres",
             "source_table": "orders",
-            "source_column": "product_id",
+            "source_column": "promotion_id",
             "target_db": "postgres",
-            "target_table": "products",
-            "target_column": "product_id",
-            "type": "Many-to-One"
-        },
-        {
-            "source_db": "postgres",
-            "source_table": "orders",
-            "source_column": "ship_mode_id",
-            "target_db": "postgres",
-            "target_table": "shipping_methods",
-            "target_column": "ship_mode_id",
-            "type": "Many-to-One"
-        },
-        {
-            "source_db": "postgres",
-            "source_table": "orders",
-            "source_column": "rep_id",
-            "target_db": "postgres",
-            "target_table": "sales_reps",
-            "target_column": "rep_id",
+            "target_table": "promotions",
+            "target_column": "promotion_id",
             "type": "Many-to-One"
         }
     ]

@@ -1,0 +1,89 @@
+Enterprise AI Analytics Portal
+Schema Intelligence — Revised Architecture
+Cloud Deployment Edition
+1. What Changed and Why
+The original architecture was sound in its pipeline logic. The conversation that produced this document questioned two implementation choices — not the pipeline itself — and arrived at a leaner stack better suited to cloud deployment.
+
+Two questions were raised:
+Do we need Neo4j alongside ChromaDB?
+Is pruning necessary given realistic schema sizes?
+
+The answers led to a simpler architecture that solves the same problems with less infrastructure.
+
+2. The Pipeline Is Unchanged
+Nothing in the core query pipeline was removed. Every step from the original document still exists:
+
+
+
+3. What Actually Changed
+3.1 ChromaDB → pgvector on Supabase
+The original design used ChromaDB as a separate vector store. In cloud deployments this creates an operational problem: ChromaDB needs either a persistent volume (awkward in most cloud environments) or a managed service (another bill, another connection to secure).
+
+pgvector is a PostgreSQL extension that adds vector similarity search natively. Supabase supports it out of the box. This means the same database already running your application handles vector embeddings — no separate service required.
+
+
+3.2 In-Memory Dict → Supabase Table + Runtime Cache
+The original design built the FK relationship graph in memory at startup as a Python dictionary. This works perfectly on a single machine. In the cloud it has one real problem: if you run multiple instances for load balancing, each builds its own graph independently. On every restart, every instance repeats the work.
+
+The fix is a simple schema_relationships table in Supabase:
+
+CREATE TABLE schema_relationships (
+    from_table TEXT,
+    to_table   TEXT,
+    from_col   TEXT,
+    to_col     TEXT
+);
+
+On startup, sync_schema.py writes FK relationships to this table. At runtime each instance loads the table once into a Python dict for fast traversal. The dict is still used for actual graph walking — it's just seeded from a persistent source rather than rebuilt from scratch every time.
+
+
+3.3 Neo4j — Decided Against
+Neo4j was proposed as a replacement for the in-memory FK graph. After evaluating it against the actual requirements, the conclusion was that it adds operational complexity without meaningful benefit at this scale:
+
+FK relationships for a typical business schema fit in a table with a few hundred rows
+1-2 hop traversal on this data is microseconds in Python — no graph DB needed
+Cloud-hosted Neo4j (Aura) is another managed service to pay for and maintain
+The use case only justifies Neo4j when doing complex multi-hop pathfinding across thousands of nodes
+
+Neo4j remains the right answer if the schema grows to 500+ highly interconnected tables, or if schema introspection (impact analysis, path queries, history) becomes a product requirement.
+
+3.4 Pruning — Deferred, Not Dropped
+The pruning section raised the question of whether over-fetching is a real problem. The honest assessment:
+
+Top-K retrieval returns 8-10 tables
+1-hop FK expansion typically adds 3-6 more tables (many already in top-K)
+Realistic expanded set: 12-16 tables at 200-400 tokens each = ~4,000-6,000 tokens
+This is well within any modern LLM context window and causes no performance issues
+
+Layer 1 pruning (similarity threshold 0.3) is still the recommended starting point because it is fast and free. Layers 2 and 3 should only be added when real over-fetching errors are observed and measured.
+
+4. The Revised Architecture
+4.1 Full Stack
+
+
+
+4.2 How the Pipeline Runs
+The runtime flow is identical to the original document. The only difference is where data is stored between requests:
+
+User query arrives → embedded into a vector
+pgvector similarity search returns top-K relevant tables
+Python dict (loaded from Supabase at startup) expands the set via 1-hop FK traversal
+Layer 1 pruning drops obviously irrelevant additions (optional)
+SQL Agent generates query on the resolved table set
+SQLAlchemy executes against Supabase and returns results
+
+4.3 Auto-Sync on Startup
+The sync process from Section 5 of the original document is unchanged in logic. The implementation now writes to two Supabase destinations instead of one:
+
+Table description embedding → pgvector (was ChromaDB)
+FK relationships → schema_relationships table (was in-memory dict only)
+
+Everything else — LLM-generated descriptions, SQLAlchemy inspection, MD5 change detection — remains exactly as designed.
+
+5. What This Solves for Cloud
+
+
+6. When to Revisit These Decisions
+The revised architecture is the right starting point. These are the conditions under which each deferred component becomes justified:
+
+

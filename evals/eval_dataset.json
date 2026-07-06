@@ -1,0 +1,22 @@
+[
+  {
+    "question": "What is the maximum discount I can give without needing approval from a team lead or higher?",
+    "expected_document": "discount_approval_matrix.txt",
+    "expected_answer": "You can give up to a Bronze-tier discount, which is 5%, without needing approval (Any Sales Rep can approve it)."
+  },
+  {
+    "question": "Are there any specific discount rules for the East region during Q4?",
+    "expected_document": "discount_approval_matrix.txt",
+    "expected_answer": "Yes, Platinum-tier discounts (30%) are frozen in the East region during Q4. No new Platinum discount orders may be created, though existing ones are honored."
+  },
+  {
+    "question": "What is the return window for a laptop?",
+    "expected_document": "sales_policy.txt",
+    "expected_answer": "Technology items like laptops have a 15-day return window."
+  },
+  {
+    "question": "What happens if a sales rep's return rate is 9% over the last 90 days?",
+    "expected_document": "sales_policy.txt",
+    "expected_answer": "A performance review is automatically initiated because their return rate exceeds 8% over a rolling 90-day window."
+  }
+]

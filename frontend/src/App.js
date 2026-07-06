@@ -3,10 +3,10 @@ import { Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import LandingPage from "./LandingPage";
 import LoginPage, { getAuthSession, clearAuthSession } from "./LoginPage";
 import {
-  MessageSquare, Database, BarChart2, BookOpen, Settings,
+  MessageSquare, Database, Settings,
   Send, Trash2, RefreshCw, Download, Mail, Upload,
   Zap, Activity, Filter, SortAsc, SortDesc, ArrowRight, Bot, User,
-  GitFork, Link, Unlink, CheckCircle, AlertCircle, TrendingUp, Plus, Sun, Moon,
+  GitFork, Unlink, CheckCircle, AlertCircle, TrendingUp, Plus, Sun, Moon,
   Maximize2, Minimize2, ZoomIn, ZoomOut, Eye, EyeOff, FileText, LogOut
 } from "lucide-react";
 import Plot from "react-plotly.js";
@@ -17,33 +17,74 @@ const API = process.env.REACT_APP_API_URL || "http://localhost:8000";
 // --- GLOBAL API ERROR HANDLING ---
 const safeFetch = async (url, options = {}) => {
   try {
-    const res = await fetch(url, options); // Call native fetch
-    if (!res.ok) throw new Error(`HTTP Error: ${res.status}`);
-    return await res.json();
+    const res = await fetch(url, options);
+    const json = await res.json().catch(() => null);
+    if (!res.ok) {
+      // Preserve the backend FastAPI error detail
+      console.error(`[API FAIL ${res.status}] ${url}:`, json);
+      return { _error: true, detail: json?.detail || `HTTP ${res.status}` };
+    }
+    return json;
   } catch (err) {
     console.error(`[API FAIL] ${url}:`, err);
-    return null;
+    return { _error: true, detail: err.message };
   }
 };
 
 // ─── THEME PALETTES ───────────────────────────────────────────
 const DARK = {
-  bg: "#07090f", surface: "#0d1117", card: "#0d1117", cardRaised: "#131920",
-  border: "#1e2733", borderSoft: "#16202b", accent: "#4f9eff",
-  accentGlow: "rgba(79,158,255,0.12)", accentDim: "#172336",
-  green: "#2ea87e", greenDim: "#0d2e21", yellow: "#c9921a", yellowDim: "#2a1f08",
-  red: "#e5534b", redDim: "#2a0f0e", purple: "#a371f7", purpleDim: "#1e1040",
-  teal: "#2dd4bf", text: "#cdd9e5", textSoft: "#8b949e", muted: "#545d68",
-  hover: "#131920", sidebarBg: "#090d13",
+  bg:          "#0d0f14",
+  surface:     "#13161d",
+  card:        "#13161d",
+  cardRaised:  "#1a1e28",
+  border:      "#252836",
+  borderSoft:  "#1a1e28",
+  accent:      "#6c63ff",
+  accentAlt:   "#818cf8",
+  accentGlow:  "rgba(108,99,255,0.18)",
+  accentDim:   "rgba(108,99,255,0.10)",
+  green:       "#22d3a5",
+  greenDim:    "rgba(34,211,165,0.10)",
+  yellow:      "#fbbf24",
+  yellowDim:   "rgba(251,191,36,0.10)",
+  red:         "#f87171",
+  redDim:      "rgba(248,113,113,0.10)",
+  purple:      "#a78bfa",
+  purpleDim:   "rgba(167,139,250,0.10)",
+  teal:        "#2dd4bf",
+  orange:      "#fb923c",
+  text:        "#e8eaf0",
+  textSoft:    "#9198b0",
+  muted:       "#5a6080",
+  hover:       "#1e2230",
+  sidebarBg:   "#0f1118",
 };
 const LIGHT = {
-  bg: "#f0f2f8", surface: "#ffffff", card: "#ffffff", cardRaised: "#f5f7ff",
-  border: "#d0d8f0", borderSoft: "#dde3f5", accent: "#4361ee",
-  accentGlow: "rgba(67,97,238,0.14)", accentDim: "#e0e7ff",
-  green: "#059669", greenDim: "#d1fae5", yellow: "#d97706", yellowDim: "#fef3c7",
-  red: "#dc2626", redDim: "#fee2e2", purple: "#7c3aed", purpleDim: "#ede9fe",
-  teal: "#0891b2", text: "#0f172a", textSoft: "#475569", muted: "#94a3b8",
-  hover: "#eef1fb", sidebarBg: "#e8ecf8",
+  bg:          "#f5f6fa",
+  surface:     "#ffffff",
+  card:        "#ffffff",
+  cardRaised:  "#eef0f8",
+  border:      "#dde0ef",
+  borderSoft:  "#eef0f8",
+  accent:      "#5b50f0",
+  accentAlt:   "#7c74f5",
+  accentGlow:  "rgba(91,80,240,0.14)",
+  accentDim:   "rgba(91,80,240,0.08)",
+  green:       "#10b981",
+  greenDim:    "rgba(16,185,129,0.10)",
+  yellow:      "#f59e0b",
+  yellowDim:   "rgba(245,158,11,0.10)",
+  red:         "#ef4444",
+  redDim:      "rgba(239,68,68,0.10)",
+  purple:      "#8b5cf6",
+  purpleDim:   "rgba(139,92,246,0.10)",
+  teal:        "#14b8a6",
+  orange:      "#f97316",
+  text:        "#1a1d2e",
+  textSoft:    "#4a5070",
+  muted:       "#8890b0",
+  hover:       "#eef0f8",
+  sidebarBg:   "#ffffff",
 };
 
 // Proxy — reads window.__theme at access time so all components always get live colors
@@ -54,40 +95,52 @@ function useTheme() { return React.useContext(ThemeCtx); }
 
 function makeStyle(theme) {
   const t = theme === "light" ? LIGHT : DARK;
+  const isDark = theme !== "light";
   return `
-    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700;800&display=swap');
     *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-    html,body,#root{height:100%;background:${t.bg};color:${t.text};font-family:'Plus Jakarta Sans',sans-serif}
-    ::-webkit-scrollbar{width:4px;height:4px}
+    html,body,#root{height:100%;background:${t.bg};color:${t.text};font-family:'Inter',sans-serif}
+    ::-webkit-scrollbar{width:5px;height:5px}
     ::-webkit-scrollbar-track{background:transparent}
-    ::-webkit-scrollbar-thumb{background:${t.border};border-radius:4px}
+    ::-webkit-scrollbar-thumb{background:${t.border};border-radius:99px}
+    ::-webkit-scrollbar-thumb:hover{background:${t.accent}60}
     input,select,textarea,button{font-family:inherit}
     a{color:${t.accent};text-decoration:none}
     @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
-    @keyframes slideIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+    @keyframes slideIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
     @keyframes spin{to{transform:rotate(360deg)}}
-    .markdown-body ul, .markdown-body ol{padding-left:1.5em;margin:0.8em 0}
-    .markdown-body li{margin-bottom:0.4em}
-    .markdown-body p{margin-bottom:0.8em}
-    .markdown-body h1, .markdown-body h2, .markdown-body h3{margin:1em 0 0.5em}
-    .markdown-body pre{background:${t.surface};padding:10px;border-radius:6px;border:1px solid ${t.border};font-family:'IBM Plex Mono',monospace;margin:0.8em 0;overflow-x:auto}
-    .markdown-body code{background:${t.surface};padding:2px 4px;border-radius:4px;font-family:'IBM Plex Mono',monospace;font-size:0.9em}
+    @keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
+    @keyframes glow{0%,100%{box-shadow:0 0 8px ${t.accent}40}50%{box-shadow:0 0 20px ${t.accent}80}}
+    .markdown-body ul,.markdown-body ol{padding-left:1.6em;margin:0.8em 0}
+    .markdown-body li{margin-bottom:0.4em;line-height:1.7}
+    .markdown-body p{margin-bottom:0.8em;line-height:1.75}
+    .markdown-body h1,.markdown-body h2,.markdown-body h3{margin:1em 0 0.5em;font-weight:700;color:${t.text}}
+    .markdown-body strong{color:${t.text};font-weight:700}
+    .markdown-body pre{background:${isDark?"#0d0f14":"#f0f1f8"};padding:14px;border-radius:10px;border:1px solid ${t.border};font-family:'IBM Plex Mono',monospace;margin:0.8em 0;overflow-x:auto;font-size:12px}
+    .markdown-body code{background:${isDark?"rgba(108,99,255,0.12)":"rgba(91,80,240,0.08)"};color:${t.accent};padding:2px 6px;border-radius:5px;font-family:'IBM Plex Mono',monospace;font-size:0.88em}
+    .markdown-body table{width:100%;border-collapse:collapse;margin:1em 0;font-size:13px}
+    .markdown-body th{background:${t.cardRaised};padding:8px 12px;text-align:left;font-weight:600;border-bottom:2px solid ${t.border};font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:${t.muted}}
+    .markdown-body td{padding:8px 12px;border-bottom:1px solid ${t.border};color:${t.textSoft}}
+    .markdown-body tr:last-child td{border-bottom:none}
+    .markdown-body blockquote{border-left:3px solid ${t.accent};padding:8px 14px;margin:1em 0;background:${t.accentDim};border-radius:0 8px 8px 0;color:${t.textSoft};font-style:italic}
   `;
 }
 
 // ─── SHARED COMPONENTS ────────────────────────────────────────
 const Spinner = ({ size = 16 }) => (
   <span style={{
-    display: "inline-block", width: size, height: size, border: `1.5px solid ${C.border}`,
-    borderTopColor: C.accent, borderRadius: "50%", animation: "spin .65s linear infinite", flexShrink: 0
+    display: "inline-block", width: size, height: size,
+    border: `2px solid ${C.border}`,
+    borderTopColor: C.accent, borderRadius: "50%",
+    animation: "spin .65s linear infinite", flexShrink: 0
   }} />
 );
 
 const Badge = ({ children, color = C.accent }) => (
   <span style={{
-    display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 9px", borderRadius: 20,
-    background: `${color}18`, color, fontSize: 10, fontWeight: 700, border: `1px solid ${color}30`,
-    fontFamily: "'IBM Plex Mono',monospace", letterSpacing: "0.04em", textTransform: "uppercase"
+    display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 99,
+    background: `${color}18`, color, fontSize: 10, fontWeight: 700, border: `1px solid ${color}35`,
+    fontFamily: "'IBM Plex Mono',monospace", letterSpacing: "0.05em", textTransform: "uppercase"
   }}>
     {children}
   </span>
@@ -95,8 +148,8 @@ const Badge = ({ children, color = C.accent }) => (
 
 const Card = ({ children, style = {} }) => (
   <div style={{
-    background: C.cardRaised, border: `1px solid ${C.border}`, borderRadius: 14, padding: 20,
-    boxShadow: `inset 0 1px 0 rgba(255,255,255,0.03)`, ...style
+    background: C.cardRaised, border: `1px solid ${C.border}`, borderRadius: 16, padding: 20,
+    boxShadow: `0 1px 0 rgba(255,255,255,0.04) inset, 0 4px 24px rgba(0,0,0,0.18)`, ...style
   }}>{children}</div>
 );
 
@@ -109,21 +162,25 @@ const Divider = ({ style = {} }) => (
 
 const Btn = ({ children, onClick, variant = "primary", disabled = false, style = {}, icon, size = "md" }) => {
   const [hov, setHov] = React.useState(false);
-  const pad = size === "sm" ? "5px 12px" : "8px 16px";
+  const pad = size === "sm" ? "5px 13px" : "8px 18px";
   const fs = size === "sm" ? 12 : 13;
   const V = {
-    primary: { background: `linear-gradient(135deg,${C.accent},#3b8dff)`, color: C.bg === "dark" ? "#000" : "#fff", boxShadow: `0 2px 8px ${C.accentGlow}` },
-    secondary: { background: C.surface, color: C.text, border: `1px solid ${C.border}` },
-    danger: { background: C.redDim, color: C.red, border: `1px solid ${C.red}30` },
-    ghost: { background: "transparent", color: C.textSoft },
-    success: { background: C.greenDim, color: C.green, border: `1px solid ${C.green}30` },
+    primary: {
+      background: hov ? `linear-gradient(135deg,${C.accentAlt},${C.accent})` : `linear-gradient(135deg,${C.accent},${C.purple}60)`,
+      color: "#fff",
+      boxShadow: hov ? `0 4px 20px ${C.accentGlow}` : `0 2px 10px ${C.accentGlow}`
+    },
+    secondary: { background: C.surface, color: C.text, border: `1px solid ${C.border}`, boxShadow: "none" },
+    danger: { background: C.redDim, color: C.red, border: `1px solid ${C.red}30`, boxShadow: "none" },
+    ghost: { background: "transparent", color: C.textSoft, boxShadow: "none" },
+    success: { background: C.greenDim, color: C.green, border: `1px solid ${C.green}30`, boxShadow: "none" },
   };
   return (
     <button onClick={onClick} disabled={disabled} onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}
       style={{
-        display: "inline-flex", alignItems: "center", gap: 6, padding: pad, borderRadius: 8, fontSize: fs,
-        fontWeight: 600, border: "none", transition: "all .15s", cursor: disabled ? "not-allowed" : "pointer",
-        letterSpacing: "0.01em", opacity: disabled ? .45 : hov ? .82 : 1,
+        display: "inline-flex", alignItems: "center", gap: 6, padding: pad, borderRadius: 10, fontSize: fs,
+        fontWeight: 600, border: "none", transition: "all .18s", cursor: disabled ? "not-allowed" : "pointer",
+        letterSpacing: "0.01em", opacity: disabled ? .4 : 1,
         transform: hov && !disabled ? "translateY(-1px)" : "none", ...V[variant], ...style
       }}>
       {icon && React.createElement(icon, { size: size === "sm" ? 12 : 14 })}{children}
@@ -179,22 +236,36 @@ const PlotlyChart = ({ plotlyJson, style = {} }) => {
 // ─── CHAT TAB ─────────────────────────────────────────────────
 function ChatTab() {
   useTheme();
+  const WELCOME_MESSAGE = `## 👋 Welcome to your AI Data Analyst
+
+I'm connected to your live database and ready to help. Here's what I can do:
+
+| Capability | Example |
+|---|---|
+| 📊 **Visualize & Analyze** | *"Show me monthly revenue as a line chart"* |
+| 🔍 **Deep-Dive Queries** | *"Which top 5 products had the highest return rate last quarter?"* |
+| 🤝 **Multi-table Joins** | *"Compare customer lifetime value across different store regions"* |
+| 📋 **Data Quality Audit** | *"Scan the orders table for anomalies"* |
+| 📝 **Executive Reports** | *"Generate a full sales report and email it to me"* |
+| ⏰ **Scheduled Reports** | *"Email me a daily sales summary every morning at 8 AM"* |
+| 📂 **Policy Research** | *"What does our return policy say about damaged goods?"* |
+
+> 💡 **Pro tip:** You can drill down after any answer — just say *"Now show me only the North region"* and I'll remember the context of our conversation.
+
+What would you like to explore first?`;
+
   const [messages, setMessages] = useState([{
     role: "assistant",
-    content: "Welcome! I am your Enterprise Data Analyst AI. Ask me anything about your sales data.", ts: new Date()
+    content: WELCOME_MESSAGE,
+    ts: new Date()
   }]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [steps, setSteps] = useState([]);
   const bottomRef = useRef();
 
-  const [suggestions, setSuggestions] = useState([
-    "Show me total sales by region as a bar chart",
-    "Plot revenue over time as a line chart",
-    "What are the top 5 products by profit?",
-    "Are there any policy violations with 25% discounts?"
-  ]);
-  const [suggestLoading, setSuggestLoading] = useState(false);
+  const [suggestions, setSuggestions] = useState([]);
+  const [suggestLoading, setSuggestLoading] = useState(true); // start loading immediately
 
   const fetchSuggestions = async (context = "") => {
     setSuggestLoading(true);
@@ -284,10 +355,15 @@ function ChatTab() {
               if (m) pendingSql = m[1].trim();
             }
           } else if (evt.type === "response") {
-            const sql = pendingSql;
+            let sql = pendingSql;
+            // Absolute Fallback: Even if stream tool_call parsing failed, extract the SQL block the AI (or backend override) appended
+            if (!sql && evt.content) {
+              const match = evt.content.match(/```sql\n([\s\S]*?)\n```/i);
+              if (match) sql = match[1].trim();
+            }
             setMessages(p => [...p, {
               role: "assistant", content: evt.content,
-              plotlyJson: evt.plotly_json, sqlQuery: sql || null, ts: new Date()
+              plotlyJson: evt.plotly_json, sqlQuery: sql || null, tokens: evt.tokens || null, ts: new Date()
             }]);
             pendingSql = null; setSteps([]); setLoading(false);
             fetchSuggestions(userMsg.content); // get context-aware follow up questions
@@ -313,24 +389,28 @@ function ChatTab() {
       {/* Header */}
       <div style={{
         display: "flex", alignItems: "center", justifyContent: "space-between",
-        padding: "16px 24px", borderBottom: `1px solid ${C.borderSoft}`, background: C.sidebarBg, flexShrink: 0
+        padding: "14px 24px", borderBottom: `1px solid ${C.border}`,
+        background: C.surface, flexShrink: 0,
+        boxShadow: `0 1px 0 ${C.border}`
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <div style={{
-            width: 36, height: 36, borderRadius: 10,
-            background: `linear-gradient(135deg,${C.purpleDim},${C.accentDim})`,
-            border: `1px solid ${C.purple}40`, display: "flex", alignItems: "center", justifyContent: "center"
+            width: 38, height: 38, borderRadius: 12,
+            background: `linear-gradient(135deg,${C.accent},${C.purple})`,
+            border: `1px solid ${C.accent}40`,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            boxShadow: `0 4px 14px ${C.accentGlow}`
           }}>
-            <Bot size={16} color={C.purple} />
+            <Bot size={17} color="#fff" />
           </div>
           <div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>AI Assistant</div>
-            <div style={{ fontSize: 11, color: C.green, display: "flex", alignItems: "center", gap: 4, marginTop: 1 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: C.text, letterSpacing: "-0.01em" }}>AI Assistant</div>
+            <div style={{ fontSize: 11, color: C.green, display: "flex", alignItems: "center", gap: 5, marginTop: 2 }}>
               <span style={{
-                width: 5, height: 5, borderRadius: "50%", background: C.green,
-                boxShadow: `0 0 4px ${C.green}`, display: "inline-block"
+                width: 6, height: 6, borderRadius: "50%", background: C.green,
+                boxShadow: `0 0 6px ${C.green}`, display: "inline-block", animation: "glow 2s ease infinite"
               }} />
-              Live · Gemini 2.5 Flash
+              Live · Gemini 2.5 Pro
             </div>
           </div>
         </div>
@@ -338,33 +418,37 @@ function ChatTab() {
       </div>
 
       {/* Messages */}
-      <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px", display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ flex: 1, overflowY: "auto", padding: "24px", display: "flex", flexDirection: "column", gap: 18 }}>
         {messages.map((msg, i) => (
           <div key={i} style={{
             display: "flex", gap: 10, alignItems: "flex-start",
-            flexDirection: msg.role === "user" ? "row-reverse" : "row", animation: "slideIn .2s ease"
+            flexDirection: msg.role === "user" ? "row-reverse" : "row", animation: "slideIn .22s ease"
           }}>
             <div style={{
-              width: 30, height: 30, borderRadius: 8, flexShrink: 0, display: "flex",
+              width: 32, height: 32, borderRadius: 10, flexShrink: 0, display: "flex",
               alignItems: "center", justifyContent: "center",
               background: msg.role === "user"
-                ? `linear-gradient(135deg,${C.accentDim},${C.purpleDim})`
-                : `linear-gradient(135deg,${C.purpleDim},${C.accentDim})`,
-              border: `1px solid ${msg.role === "user" ? C.accent : C.purple}30`
+                ? `linear-gradient(135deg,${C.accent}80,${C.purple}80)`
+                : `linear-gradient(135deg,${C.teal}40,${C.accent}40)`,
+              border: `1px solid ${msg.role === "user" ? C.accent + "50" : C.border}`
             }}>
-              {msg.role === "user" ? <User size={13} color={C.accent} /> : <Bot size={13} color={C.purple} />}
+              {msg.role === "user" ? <User size={14} color={C.accent} /> : <Bot size={14} color={C.teal} />}
             </div>
-            <div style={{ maxWidth: "76%", display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={{ maxWidth: "78%", display: "flex", flexDirection: "column", gap: 6 }}>
               <div style={{
-                background: msg.role === 'user' ? C.accentDim : C.cardRaised,
-                border: `1px solid ${msg.error ? C.red : msg.role === 'user' ? C.accent + '30' : C.border}`,
-                borderRadius: msg.role === 'user' ? '14px 4px 14px 14px' : '4px 14px 14px 14px',
-                padding: '11px 15px', fontSize: 13.5, lineHeight: 1.6,
-                wordBreak: 'break-word', color: C.text
+                background: msg.role === "user"
+                  ? `linear-gradient(135deg,${C.accent}22,${C.purple}18)`
+                  : C.cardRaised,
+                border: `1px solid ${msg.error ? C.red : msg.role === "user" ? C.accent + "40" : C.border}`,
+                borderRadius: msg.role === "user" ? "16px 4px 16px 16px" : "4px 16px 16px 16px",
+                borderLeft: msg.role === "assistant" ? `3px solid ${C.accent}60` : undefined,
+                padding: "12px 16px", fontSize: 13.5, lineHeight: 1.65,
+                wordBreak: "break-word", color: C.text,
+                boxShadow: msg.role === "user" ? `0 2px 12px ${C.accentGlow}` : `0 2px 12px rgba(0,0,0,0.15)`
               }}>
                 <div className="markdown-body">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {msg.content ? msg.content.replace(/```sql[\s\S]*?```/gi, "").trim() : ""}
+                    {msg.content ? msg.content.replace(/```sql[\s\S]*?```/gi, "").replace(/\[CHART\]/gi, "").trim() : ""}
                   </ReactMarkdown>
                 </div>
               </div>
@@ -399,13 +483,23 @@ function ChatTab() {
                 </details>
               )}
 
-              <span style={{
-                fontSize: 10, color: C.muted,
-                alignSelf: msg.role === "user" ? "flex-end" : "flex-start",
-                fontFamily: "'IBM Plex Mono',monospace", marginTop: 4
+              <div style={{
+                display: "flex", justifyContent: "space-between", alignItems: "center",
+                marginTop: 4, width: "100%"
               }}>
-                {msg.ts?.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-              </span>
+                <span style={{ fontSize: 10, color: C.muted, fontFamily: "'IBM Plex Mono',monospace" }}>
+                  {msg.ts?.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                </span>
+                {msg.tokens && (
+                  <span style={{
+                    fontSize: 9, color: C.muted, background: C.borderSoft,
+                    padding: "2px 6px", borderRadius: 4, fontFamily: "'IBM Plex Mono',monospace",
+                    display: "flex", alignItems: "center", gap: 3
+                  }}>
+                    <Zap size={8} /> {msg.tokens} tokens
+                  </span>
+                )}
+              </div>
             </div>
           </div>
         ))}
@@ -446,7 +540,7 @@ function ChatTab() {
           <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
             <div style={{
               width: 30, height: 30, borderRadius: 8, display: "flex", alignItems: "center",
-              justifyContent: "center", background: C.purpleDim, border: `1px solid ${C.purple}30`
+              justifyContent: "center", background: C.surface, border: `1px solid ${C.border}`
             }}>
               <Bot size={13} color={C.purple} />
             </div>
@@ -468,60 +562,71 @@ function ChatTab() {
 
       {/* Suggestions after last reply */}
       {!loading && messages.length > 1 && messages[messages.length - 1].role === 'assistant' && (
-        <div style={{ padding: "0 24px 10px", display: "flex", gap: 6, flexWrap: "wrap", animation: "slideIn .25s ease" }}>
-          <span style={{ fontSize: 10, color: C.muted, width: '100%', marginBottom: 2, fontFamily: "'IBM Plex Mono',monospace" }}>
-            {suggestLoading ? "✨ Generating dynamic suggestions..." : "Suggested follow-ups:"}
+        <div style={{ padding: "0 24px 12px", display: "flex", gap: 7, flexWrap: "wrap", animation: "slideIn .25s ease" }}>
+          <span style={{
+            fontSize: 10, color: C.muted, width: '100%', marginBottom: 4,
+            fontFamily: "'IBM Plex Mono',monospace", letterSpacing: "0.05em", textTransform: "uppercase"
+          }}>
+            {suggestLoading ? <><Spinner size={9} /> &nbsp;Generating…</> : "✦ Suggested follow-ups"}
           </span>
           {!suggestLoading && suggestions.map((s, i) => (
             <button key={i} onClick={() => { setInput(s); }}
               style={{
-                padding: "5px 12px", borderRadius: 20, background: C.surface,
-                border: `1px solid ${C.border}`, color: C.textSoft, fontSize: 11, cursor: "pointer",
-                transition: "all .15s", fontFamily: "'Plus Jakarta Sans',sans-serif"
+                padding: "6px 13px", borderRadius: 99,
+                background: C.accentDim,
+                border: `1px solid ${C.accent}35`,
+                color: C.accent, fontSize: 11.5, cursor: "pointer",
+                transition: "all .18s", fontWeight: 500
               }}
-              onMouseEnter={e => { e.currentTarget.style.borderColor = C.accent; e.currentTarget.style.color = C.text; e.currentTarget.style.background = C.accentDim; }}
-              onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.color = C.textSoft; e.currentTarget.style.background = C.surface; }}>
-              ✦ {s}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {messages.length <= 1 && (
-        <div style={{ padding: "0 24px 12px", display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {suggestLoading ? (
-            <span style={{ fontSize: 11, color: C.muted, fontStyle: "italic" }}>✨ Generating context-aware suggestions...</span>
-          ) : suggestions.map((s, i) => (
-            <button key={i} onClick={() => setInput(s)}
-              style={{
-                padding: "5px 12px", borderRadius: 20, background: C.cardRaised,
-                border: `1px solid ${C.border}`, color: C.textSoft, fontSize: 11.5, cursor: "pointer",
-                transition: "all .15s", fontFamily: "'Plus Jakarta Sans',sans-serif"
-              }}
-              onMouseEnter={e => { e.currentTarget.style.borderColor = C.accent; e.currentTarget.style.color = C.text; e.currentTarget.style.background = C.accentDim; }}
-              onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.color = C.textSoft; e.currentTarget.style.background = C.cardRaised; }}>
+              onMouseEnter={e => { e.currentTarget.style.background = C.accent; e.currentTarget.style.color = "#fff"; e.currentTarget.style.boxShadow = `0 4px 16px ${C.accentGlow}`; e.currentTarget.style.transform = "translateY(-1px)"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = C.accentDim; e.currentTarget.style.color = C.accent; e.currentTarget.style.boxShadow = "none"; e.currentTarget.style.transform = "none"; }}>
               {s}
             </button>
           ))}
         </div>
       )}
 
+      {messages.length <= 1 && (
+        <div style={{ padding: "0 24px 14px", display: "flex", gap: 7, flexWrap: "wrap" }}>
+          {suggestLoading ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, color: C.muted, fontSize: 11 }}>
+              <Spinner size={11} />
+              <span style={{ fontFamily: "'IBM Plex Mono',monospace", letterSpacing: "0.04em" }}>Generating smart questions from your database…</span>
+            </div>
+          ) : suggestions.map((s, i) => (
+            <button key={i} onClick={() => setInput(s)}
+              style={{
+                padding: "7px 15px", borderRadius: 99,
+                background: C.cardRaised,
+                border: `1px solid ${C.border}`,
+                color: C.textSoft, fontSize: 12, cursor: "pointer",
+                transition: "all .18s", fontWeight: 500
+              }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = C.accent; e.currentTarget.style.color = C.text; e.currentTarget.style.background = C.accentDim; e.currentTarget.style.boxShadow = `0 2px 12px ${C.accentGlow}`; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.color = C.textSoft; e.currentTarget.style.background = C.cardRaised; e.currentTarget.style.boxShadow = "none"; }}>
+              ✦ {s}
+            </button>
+          ))}
+        </div>
+      )}
+
       <div style={{
-        padding: "14px 24px 18px", borderTop: `1px solid ${C.borderSoft}`,
-        background: C.sidebarBg, display: "flex", gap: 10, alignItems: "flex-end"
+        padding: "12px 20px 18px", borderTop: `1px solid ${C.border}`,
+        background: C.surface, display: "flex", gap: 10, alignItems: "flex-end"
       }}>
         <textarea value={input} onChange={e => setInput(e.target.value)}
           placeholder="Ask anything about your data…" rows={2}
           onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
           style={{
-            flex: 1, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10,
+            flex: 1, background: C.cardRaised, border: `1px solid ${C.border}`, borderRadius: 12,
             padding: "10px 14px", color: C.text, fontSize: 13.5, outline: "none", resize: "none",
-            fontFamily: "'Plus Jakarta Sans',sans-serif", lineHeight: 1.55, transition: "border .15s,box-shadow .15s"
+            lineHeight: 1.6, transition: "border .18s,box-shadow .18s",
+            boxShadow: "none"
           }}
           onFocus={e => { e.target.style.borderColor = C.accent; e.target.style.boxShadow = `0 0 0 3px ${C.accentGlow}`; }}
           onBlur={e => { e.target.style.borderColor = C.border; e.target.style.boxShadow = "none"; }} />
         <Btn onClick={sendMessage} disabled={!input.trim() || loading} icon={Send}
-          style={{ height: 42, paddingLeft: 18, paddingRight: 18 }}>
+          style={{ height: 44, paddingLeft: 20, paddingRight: 20, borderRadius: 12 }}>
           {loading ? <Spinner size={13} /> : "Send"}
         </Btn>
       </div>
@@ -530,7 +635,7 @@ function ChatTab() {
 }
 
 // ─── DATA EXPLORER TAB ────────────────────────────────────────
-function DataExplorerTab({ activeDb }) {
+function DataExplorerTab({ activeDb, schemaVersion = 0 }) {
   useTheme();
   const [tables, setTables] = useState([]);
   const [selectedTable, setSelectedTable] = useState("");
@@ -543,33 +648,42 @@ function DataExplorerTab({ activeDb }) {
   const [sortCol, setSortCol] = useState("");
   const [sortOrder, setSortOrder] = useState("ASC");
   const [loadingData, setLoadingData] = useState(false);
-  const [aiInsight, setAiInsight] = useState("");
   const [scanLoading, setScanLoading] = useState(false);
 
   useEffect(() => {
+    // Reset all state so we start completely fresh with the new database
+    setSelectedTable("");
+    setColumns([]);
+    setData({ rows: [], total: 0, total_pages: 1, page: 1 });
+    setPage(1);
+    setGlobalSearch(""); setFilterCol(""); setFilterVal(""); setSortCol("");
+    setAiIssues([]);
+
     safeFetch(`${API}/api/tables`).then(d => {
       if (d && d.tables) {
         setTables(d.tables);
         if (d.tables.length) setSelectedTable(d.tables[0]);
       }
     });
-  }, [activeDb]);
+  }, [activeDb, schemaVersion]);
 
   useEffect(() => {
     if (!selectedTable) return;
-    safeFetch(`${API}/api/tables/${selectedTable}/columns`).then(r => r)
-      .then(d => setColumns(d.columns)).catch(() => { });
+    safeFetch(`${API}/api/tables/${selectedTable}/columns`)
+      .then(d => { if (d && Array.isArray(d.columns)) setColumns(d.columns); })
+      .catch(() => { });
   }, [selectedTable]);
 
   const fetchData = useCallback(async (p = page) => {
     if (!selectedTable) return;
     setLoadingData(true);
     const params = new URLSearchParams({ page: p, page_size: 10 });
-    // Global search — if set, ignore filterCol/filterVal
     if (globalSearch.trim()) {
       params.append("global_search", globalSearch.trim());
-    } else {
-      if (filterCol && filterVal) { params.append("filter_col", filterCol); params.append("filter_val", filterVal); }
+    }
+    if (filterCol && filterCol !== "None" && filterVal.trim()) {
+      params.append("filter_col", filterCol);
+      params.append("filter_val", filterVal.trim());
     }
     if (sortCol) { params.append("sort_col", sortCol); params.append("sort_order", sortOrder); }
     const d = await safeFetch(`${API}/api/tables/${selectedTable}/data?${params}`);
@@ -577,20 +691,29 @@ function DataExplorerTab({ activeDb }) {
       setData(d);
     }
     setLoadingData(false);
-  }, [selectedTable, globalSearch, filterCol, filterVal, sortCol, sortOrder, page]);
+  }, [selectedTable, globalSearch, sortCol, sortOrder, page, filterCol, filterVal]);
 
   useEffect(() => { fetchData(1); setPage(1); }, [selectedTable]); // eslint-disable-line
 
+  // Auto-refetch when sort column or sort direction changes (fixes the toggle button).
+  // Guard with sortCol so this doesn't fire on initial mount when sortCol is empty.
+  useEffect(() => {
+    if (selectedTable && sortCol) { setPage(1); fetchData(1); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sortCol, sortOrder]);
+
+  const [aiIssues, setAiIssues] = useState([]);
+
   const runScan = async () => {
-    setScanLoading(true); setAiInsight("");
+    setScanLoading(true); setAiIssues([]);
     const d = await safeFetch(`${API}/api/tables/${selectedTable}/ai-scan`, { method: "POST" });
-    if (d) {
-      setAiInsight(d.insight);
+    if (d && d.issues) {
+      setAiIssues(d.issues);
     }
     setScanLoading(false);
   };
 
-  const colNames = columns.map(c => c.name);
+  const colNames = Array.isArray(columns) ? columns.map(c => c.name) : [];
 
   const PaginationBar = () => (
     <div style={{
@@ -646,8 +769,8 @@ function DataExplorerTab({ activeDb }) {
           </div>
         </div>
         <Divider style={{ margin: "0 0 14px" }} />
-        {/* Column filter + sort */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
+        {/* Unified column picker — same column for filter + sort */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
           <div>
             <label style={{ fontSize: 12, color: C.muted, display: "block", marginBottom: 6 }}>Table</label>
             <Select value={selectedTable} onChange={e => setSelectedTable(e.target.value)}>
@@ -655,31 +778,27 @@ function DataExplorerTab({ activeDb }) {
             </Select>
           </div>
           <div>
-            <label style={{ fontSize: 12, color: C.muted, display: "block", marginBottom: 6 }}>Filter Column</label>
-            <Select value={filterCol} onChange={e => setFilterCol(e.target.value)}>
+            <label style={{ fontSize: 12, color: C.muted, display: "block", marginBottom: 6 }}>Column</label>
+            <Select value={filterCol} onChange={e => { setFilterCol(e.target.value); setSortCol(e.target.value); }}>
               <option value="">— none —</option>
               {colNames.map(c => <option key={c} value={c}>{c}</option>)}
             </Select>
           </div>
           <div>
             <label style={{ fontSize: 12, color: C.muted, display: "block", marginBottom: 6 }}>Column Value</label>
-            <Input value={filterVal} onChange={e => setFilterVal(e.target.value)}
-              placeholder="filter by column…" onKeyDown={e => e.key === "Enter" && fetchData(1)} />
-          </div>
-          <div>
-            <label style={{ fontSize: 12, color: C.muted, display: "block", marginBottom: 6 }}>Sort</label>
             <div style={{ display: "flex", gap: 6 }}>
-              <Select value={sortCol} onChange={e => setSortCol(e.target.value)} style={{ flex: 1 }}>
-                <option value="">— none —</option>
-                {colNames.map(c => <option key={c} value={c}>{c}</option>)}
-              </Select>
-              <Btn variant="secondary" onClick={() => setSortOrder(o => o === "ASC" ? "DESC" : "ASC")}
+              <Input value={filterVal} onChange={e => setFilterVal(e.target.value)}
+                placeholder="Filter matches..." disabled={!filterCol}
+                onKeyDown={e => { if (e.key === "Enter") { setPage(1); fetchData(1); } }}
+                style={{ flex: 1 }} />
+              <Btn variant="secondary" disabled={!filterCol}
+                onClick={() => setSortOrder(o => o === "ASC" ? "DESC" : "ASC")}
                 icon={sortOrder === "ASC" ? SortAsc : SortDesc} />
             </div>
           </div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
-          <Btn onClick={() => { setPage(1); fetchData(1); }} icon={Filter}>Apply</Btn>
+          <Btn onClick={() => { setPage(1); fetchData(1); }} icon={Filter}>Apply All (Search, Filter, Sort)</Btn>
           <Btn variant="secondary" onClick={() => {
             setGlobalSearch(""); setFilterCol(""); setFilterVal(""); setSortCol("");
             setPage(1); setTimeout(() => fetchData(1), 0);
@@ -699,7 +818,7 @@ function DataExplorerTab({ activeDb }) {
                     <tr style={{ background: C.surface }}>
                       {columns.map(col => (
                         <th key={col.name}
-                          onClick={() => { setSortCol(col.name); setSortOrder(o => o === "ASC" ? "DESC" : "ASC"); fetchData(1); }}
+                          onClick={() => { setSortCol(col.name); setSortOrder(o => o === "ASC" ? "DESC" : "ASC"); }}
                           style={{
                             padding: "9px 14px", textAlign: "left", cursor: "pointer",
                             borderBottom: `1px solid ${C.border}`, color: C.muted,
@@ -738,19 +857,96 @@ function DataExplorerTab({ activeDb }) {
       </Card>
 
       <Card>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-          <h3 style={{ fontSize: 15, fontWeight: 600, color: C.text }}>🔍 AI Data Quality Scan</h3>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+          <div>
+            <h3 style={{ fontSize: 15, fontWeight: 600, color: C.text }}>🔬 AI Data Quality Scan</h3>
+            <p style={{ fontSize: 11, color: C.muted, marginTop: 3 }}>Analyses the table schema and a 10-row sample to detect quality issues</p>
+          </div>
           <Btn onClick={runScan} disabled={scanLoading || !selectedTable} icon={Zap}>
             {scanLoading ? <><Spinner size={13} /> Scanning…</> : "Run Scan"}
           </Btn>
         </div>
-        {aiInsight && (
-          <div style={{
-            background: C.surface, border: `1px solid ${C.yellow}44`,
-            borderLeft: `3px solid ${C.yellow}`, borderRadius: 8,
-            padding: "12px 16px", fontSize: 13, lineHeight: 1.7, color: C.text
-          }}>
-            {aiInsight}
+
+        {/* Skeleton while scanning */}
+        {scanLoading && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {[0, 1].map(i => (
+              <div key={i} style={{
+                height: 90, borderRadius: 10, background: C.surface,
+                border: `1px solid ${C.border}`, animation: "pulse 1.4s ease infinite"
+              }} />
+            ))}
+          </div>
+        )}
+
+        {/* Issue cards */}
+        {!scanLoading && aiIssues.length > 0 && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {aiIssues.map((issue, i) => {
+              const sevColor = issue.severity === "high" ? C.red
+                : issue.severity === "medium" ? C.yellow : C.green;
+              const sevBg = issue.severity === "high" ? C.redDim
+                : issue.severity === "medium" ? C.yellowDim : C.greenDim;
+              return (
+                <div key={i} style={{
+                  background: C.surface, borderRadius: 10,
+                  border: `1px solid ${C.border}`,
+                  borderLeft: `4px solid ${sevColor}`,
+                  padding: "14px 16px", display: "flex", flexDirection: "column", gap: 8
+                }}>
+                  {/* Header row */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                    <span style={{
+                      display: "inline-flex", alignItems: "center", gap: 4,
+                      padding: "3px 9px", borderRadius: 20,
+                      background: sevBg, color: sevColor,
+                      fontSize: 10, fontWeight: 700, border: `1px solid ${sevColor}30`,
+                      fontFamily: "'IBM Plex Mono',monospace", textTransform: "uppercase", letterSpacing: "0.06em"
+                    }}>
+                      {issue.severity === "high" ? "⚠ HIGH" : issue.severity === "medium" ? "◆ MEDIUM" : "✓ LOW"}
+                    </span>
+                    <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{issue.title}</span>
+                    {issue.affected && (
+                      <span style={{
+                        marginLeft: "auto", fontSize: 10, color: C.muted,
+                        background: C.cardRaised, border: `1px solid ${C.border}`,
+                        borderRadius: 6, padding: "2px 8px",
+                        fontFamily: "'IBM Plex Mono',monospace"
+                      }}>
+                        {issue.affected}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Description */}
+                  <p style={{ fontSize: 13, color: C.text, lineHeight: 1.65, margin: 0 }}>
+                    {issue.description}
+                  </p>
+
+                  {/* Recommendation */}
+                  {issue.recommendation && (
+                    <div style={{
+                      display: "flex", alignItems: "flex-start", gap: 8,
+                      background: `${sevColor}0d`, border: `1px solid ${sevColor}22`,
+                      borderRadius: 7, padding: "8px 12px"
+                    }}>
+                      <span style={{ fontSize: 12, color: sevColor, flexShrink: 0, marginTop: 1 }}>→</span>
+                      <span style={{ fontSize: 12, color: C.textSoft, lineHeight: 1.6 }}>
+                        <strong style={{ color: sevColor }}>Fix: </strong>{issue.recommendation}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Empty state */}
+        {!scanLoading && aiIssues.length === 0 && (
+          <div style={{ textAlign: "center", padding: "28px 0", color: C.muted }}>
+            <div style={{ fontSize: 28, marginBottom: 8 }}>🔬</div>
+            <p style={{ fontSize: 13 }}>Click <strong>Run Scan</strong> to detect data quality issues in <code style={{ color: C.accent }}>{selectedTable || "a table"}</code></p>
           </div>
         )}
       </Card>
@@ -898,21 +1094,11 @@ function SettingsTab({ activeDb, setActiveDb }) {
   useTheme();
   const [databases, setDatabases] = useState([]);
   const [selectedDb, setSelectedDb] = useState("");
-  const [scheduleTime, setScheduleTime] = useState("09:00");
-  const [recipientEmail, setRecipientEmail] = useState("");
-  const [schedEnabled, setSchedEnabled] = useState(true);
-  const [schedStatus, setSchedStatus] = useState(null);
-  const [reportHtml, setReportHtml] = useState("");
-  const [reportLoading, setReportLoading] = useState(false);
-  const [emailStatus, setEmailStatus] = useState("");
-  const [emailReport, setEmailReport] = useState("");
-  const [sendNowLoading, setSendNowLoading] = useState(false);
 
   useEffect(() => {
-    safeFetch(`${API}/api/databases`).then(r => r).then(d => {
-      setDatabases(d.databases); setSelectedDb(d.databases[0] || "");
+    safeFetch(`${API}/api/databases`).then(d => {
+      if (d && d.databases) { setDatabases(d.databases); setSelectedDb(d.databases[0] || ""); }
     }).catch(() => { });
-    safeFetch(`${API}/api/scheduler/status`).then(r => r).then(setSchedStatus).catch(() => { });
   }, []);
 
   const connectDb = async () => {
@@ -957,17 +1143,29 @@ function ReportsTab() {
   const [emailStatus, setEmailStatus] = useState("");
   const [emailReport, setEmailReport] = useState("");
   const [sendNowLoading, setSendNowLoading] = useState(false);
+  const [schedUpdateStatus, setSchedUpdateStatus] = useState("");
+  const [schedUpdateLoading, setSchedUpdateLoading] = useState(false);
 
   useEffect(() => {
     safeFetch(`${API}/api/scheduler/status`).then(r => r).then(setSchedStatus).catch(() => { });
   }, []);
 
   const updateSchedule = async () => {
-    await safeFetch(`${API}/api/scheduler/update`, {
+    if (!recipientEmail && schedEnabled) { setSchedUpdateStatus("❌ Please enter a recipient email."); return; }
+    setSchedUpdateLoading(true); setSchedUpdateStatus("");
+    const d = await safeFetch(`${API}/api/scheduler/update`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ time_str: scheduleTime, recipient_email: recipientEmail, enabled: schedEnabled })
     });
-    const d = await safeFetch(`${API}/api/scheduler/status`).then(r => r); setSchedStatus(d);
+    if (d && d.success) {
+      setSchedUpdateStatus("✅ Scheduler updated successfully!");
+      const status = await safeFetch(`${API}/api/scheduler/status`);
+      if (status && !status._error) setSchedStatus(status);
+    } else {
+      const msg = d?.detail || "Unknown error — check backend logs.";
+      setSchedUpdateStatus(`❌ Failed: ${msg}`);
+    }
+    setSchedUpdateLoading(false);
   };
 
   const sendNow = async () => {
@@ -1022,12 +1220,14 @@ function ReportsTab() {
               <input type="checkbox" checked={schedEnabled} onChange={e => setSchedEnabled(e.target.checked)} /> Enable daily email report
             </label>
             <div style={{ display: "flex", gap: 8 }}>
-              <Btn onClick={updateSchedule} icon={RefreshCw}>Update</Btn>
+              <Btn onClick={updateSchedule} disabled={schedUpdateLoading} icon={RefreshCw}>
+                {schedUpdateLoading ? <><Spinner size={13} /> Updating…</> : "Update"}
+              </Btn>
               <Btn variant="secondary" onClick={sendNow} disabled={sendNowLoading || !recipientEmail} icon={Mail}>
                 {sendNowLoading ? <><Spinner size={13} /> Sending…</> : "Send Now"}
               </Btn>
             </div>
-            {emailStatus && <p style={{ fontSize: 12, color: C.green }}>{emailStatus}</p>}
+            {schedUpdateStatus && <p style={{ fontSize: 12, color: schedUpdateStatus.startsWith("✅") ? C.green : C.red }}>{schedUpdateStatus}</p>}
           </div>
         </Card>
       </div>
@@ -1044,9 +1244,14 @@ function ReportsTab() {
         {reportHtml && (
           <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 12 }}>
             <div style={{ display: "flex", gap: 8 }}>
-              <a href={`data:text/html;charset=utf-8,${encodeURIComponent(reportHtml)}`} download="Executive_Sales_Report.html">
-                <Btn icon={Download}>Download HTML</Btn>
-              </a>
+              <Btn icon={Download} onClick={() => {
+                const blob = new Blob([reportHtml], { type: 'text/html;charset=utf-8' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url; a.download = 'Executive_Sales_Report.html';
+                document.body.appendChild(a); a.click();
+                document.body.removeChild(a); URL.revokeObjectURL(url);
+              }}>Download HTML</Btn>
             </div>
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <Input value={emailReport} onChange={e => setEmailReport(e.target.value)} placeholder="Email report to..." style={{ maxWidth: 300 }} />
@@ -1064,7 +1269,7 @@ function ReportsTab() {
 }
 
 // ─── SCHEMA MAPPER TAB ────────────────────────────────────────
-function SchemaMapperTab() {
+function SchemaMapperTab({ onRefresh }) {
   useTheme();
   const [relationships, setRelationships] = useState([]);
   const [isMaximized, setIsMaximized] = useState(false);
@@ -1103,6 +1308,8 @@ function SchemaMapperTab() {
       }
     } catch { }
     setAutoMapping(false);
+    // Notify parent so DataExplorer re-fetches its table list
+    if (onRefresh) onRefresh();
   };
 
   const [mapColumns, setMapColumns] = useState({});
@@ -1116,29 +1323,35 @@ function SchemaMapperTab() {
       if (!newTables[tk]) newTables[tk] = { db: rel.target_db, table: rel.target_table };
     });
 
-    Object.values(newTables).forEach(async (t) => {
-      const key = `${t.db}.${t.table}`;
-      if (!mapColumns[key]) {
-        try {
-          const d = await safeFetch(`${API}/api/tables/${t.table}/columns?db_filename=${t.db}`);
-          if (d && d.columns) {
-            setMapColumns(p => ({ ...p, [key]: d.columns }));
+    // Use Promise.all so column fetches run in parallel and errors are properly caught
+    Promise.all(
+      Object.values(newTables).map(async (t) => {
+        const key = `${t.db}.${t.table}`;
+        if (!mapColumns[key]) {
+          try {
+            const d = await safeFetch(`${API}/api/tables/${t.table}/columns?db_filename=${t.db}`);
+            if (d && d.columns) {
+              setMapColumns(p => ({ ...p, [key]: d.columns }));
+            }
+          } catch (err) {
+            console.error("Failed to fetch columns for", key, err);
+            setMapColumns(p => ({ ...p, [key]: [] }));
           }
-        } catch (err) {
-          console.error("Failed to fetch columns for", key, err);
-          setMapColumns(p => ({ ...p, [key]: [] }));
         }
-      }
-    });
+      })
+    ).catch(err => console.error("Schema column fetch error:", err));
   }, [relationships]);
 
-  const allTables = {};
-  relationships.forEach(rel => {
-    const sk = `${rel.source_db}.${rel.source_table}`;
-    const tk = `${rel.target_db}.${rel.target_table}`;
-    if (!allTables[sk]) allTables[sk] = { db: rel.source_db, table: rel.source_table, cols: mapColumns[sk] || [] };
-    if (!allTables[tk]) allTables[tk] = { db: rel.target_db, table: rel.target_table, cols: mapColumns[tk] || [] };
-  });
+  const allTables = useMemo(() => {
+    const result = {};
+    relationships.forEach(rel => {
+      const sk = `${rel.source_db}.${rel.source_table}`;
+      const tk = `${rel.target_db}.${rel.target_table}`;
+      if (!result[sk]) result[sk] = { db: rel.source_db, table: rel.source_table, cols: mapColumns[sk] || [] };
+      if (!result[tk]) result[tk] = { db: rel.target_db, table: rel.target_table, cols: mapColumns[tk] || [] };
+    });
+    return result;
+  }, [relationships, mapColumns]);
 
   const { svgW, svgH, positions } = useMemo(() => {
     const keys = Object.keys(allTables);
@@ -1355,348 +1568,11 @@ function SchemaMapperTab() {
   );
 }
 
-// ─── HYBRID SEARCH TAB ────────────────────────────────────────
-function HybridSearchTab() {
-  useTheme();
-  const [query, setQuery] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState(null);
-  const [error, setError] = useState("");
-  const [showSql, setShowSql] = useState(false);
-
-  const EXAMPLES = [
-    "What are the top 5 customers by revenue?",
-    "Show orders from the Technology category",
-    "Which products have the highest profit margin?",
-    "Find all orders from California",
-  ];
-
-  const search = async (q = query) => {
-    if (!q.trim()) return;
-    setLoading(true); setError(""); setResult(null); setShowSql(false);
-    try {
-      const data = await safeFetch(`${API}/api/hybrid-search`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: q }),
-      });
-      if (data) {
-        setResult(data);
-      } else {
-        setError("Failed to reach analytical engine. Check backend server.");
-      }
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const sqlOk = result?.sql?.success && result?.sql?.rows?.length > 0;
-  const kwOk = result?.rag?.success && result?.rag?.blocks?.length > 0;
-
-  return (
-    <div style={{ padding: 28, display: "flex", flexDirection: "column", gap: 20, height: "100%", overflowY: "auto" }}>
-      {/* Header */}
-      <div>
-        <h2 style={{ fontSize: 22, fontWeight: 800, color: C.text, letterSpacing: "-0.03em", marginBottom: 4 }}>
-          ⚡ Hybrid Search
-        </h2>
-        <p style={{ fontSize: 13, color: C.muted }}>
-          Fires two parallel DB queries — an <em>analytical SELECT</em> (left) and a <em>keyword scan</em> across every table column (right).
-        </p>
-      </div>
-
-      {/* Search Bar */}
-      <Card style={{ padding: 16 }}>
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          <input
-            value={query} onChange={e => setQuery(e.target.value)}
-            onKeyDown={e => e.key === "Enter" && search()}
-            placeholder="Ask anything — e.g. 'top customers by profit'"
-            style={{
-              flex: 1, padding: "11px 16px", borderRadius: 10,
-              background: C.surface, border: `1px solid ${C.border}`,
-              color: C.text, fontSize: 14, outline: "none",
-              fontFamily: "'Plus Jakarta Sans',sans-serif",
-              transition: "border-color .15s",
-            }}
-            onFocus={e => { e.currentTarget.style.borderColor = C.accent; }}
-            onBlur={e => { e.currentTarget.style.borderColor = C.border; }}
-          />
-          <Btn onClick={() => search()} icon={Activity} disabled={loading}>
-            {loading ? "Searching…" : "Search"}
-          </Btn>
-        </div>
-        {/* Example chips */}
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
-          {EXAMPLES.map((ex, i) => (
-            <button key={i} onClick={() => { setQuery(ex); search(ex); }}
-              style={{
-                padding: "4px 12px", borderRadius: 20,
-                background: C.surface, border: `1px solid ${C.border}`,
-                color: C.textSoft, fontSize: 11.5, cursor: "pointer",
-                fontFamily: "'Plus Jakarta Sans',sans-serif", transition: "all .15s",
-              }}
-              onMouseEnter={e => { e.currentTarget.style.borderColor = C.accent; e.currentTarget.style.color = C.accent; }}
-              onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.color = C.textSoft; }}
-            >
-              {ex}
-            </button>
-          ))}
-        </div>
-      </Card>
-
-      {/* Loading */}
-      {loading && (
-        <div style={{ textAlign: "center", padding: 60, color: C.muted }}>
-          <div style={{
-            width: 36, height: 36, margin: "0 auto 14px",
-            border: `3px solid ${C.border}`, borderTopColor: C.accent,
-            borderRadius: "50%", animation: "spin 0.7s linear infinite"
-          }} />
-          <p style={{ fontSize: 14 }}>Running analytical SQL + keyword scan across all tables in parallel…</p>
-        </div>
-      )}
-
-      {/* Error */}
-      {error && (
-        <div style={{ padding: "12px 16px", background: `${C.red}15`, border: `1px solid ${C.red}30`, borderRadius: 10, color: C.red, fontSize: 13 }}>
-          ⚠ {error}
-        </div>
-      )}
-
-      {/* Results */}
-      {result && !loading && (
-        <>
-          {/* AI Synthesis bar */}
-          <Card style={{
-            padding: "14px 20px",
-            background: `linear-gradient(135deg, ${C.accentDim}, ${C.purpleDim || C.accentDim})`,
-            border: `1px solid ${C.accent}30`,
-          }}>
-            <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
-              <span style={{ fontSize: 20, flexShrink: 0 }}>✨</span>
-              <div>
-                <div style={{ fontSize: 11, fontWeight: 700, color: C.accent, marginBottom: 4, fontFamily: "'IBM Plex Mono',monospace", letterSpacing: "0.08em" }}>AI SYNTHESIS</div>
-                <p style={{ fontSize: 13.5, color: C.text, lineHeight: 1.65, margin: 0 }}>{result.synthesis}</p>
-              </div>
-            </div>
-          </Card>
-
-          {/* Two-panel layout */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "start" }}>
-
-            {/* SQL Panel */}
-            <Card style={{ padding: 0, overflow: "hidden" }}>
-              <div style={{
-                padding: "12px 16px", borderBottom: `1px solid ${C.border}`,
-                display: "flex", alignItems: "center", justifyContent: "space-between",
-                background: `${C.accentDim}`,
-              }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <Database size={14} color={C.accent} />
-                  <span style={{ fontSize: 13, fontWeight: 700, color: C.accent }}>SQL Records</span>
-                  {sqlOk && (
-                    <span style={{
-                      fontSize: 10, background: C.accent + "22", color: C.accent,
-                      border: `1px solid ${C.accent}40`, borderRadius: 20, padding: "2px 8px", fontWeight: 700
-                    }}>
-                      {result.sql.total_rows} rows
-                    </span>
-                  )}
-                </div>
-                {result.sql.sql && (
-                  <button onClick={() => setShowSql(s => !s)} style={{
-                    background: "none", border: `1px solid ${C.border}`, borderRadius: 6,
-                    color: C.muted, cursor: "pointer", padding: "3px 8px", fontSize: 10,
-                    fontFamily: "'IBM Plex Mono',monospace",
-                  }}>
-                    {showSql ? "Hide SQL" : "Show SQL"}
-                  </button>
-                )}
-              </div>
-
-              {showSql && result.sql.sql && (
-                <div style={{
-                  padding: "10px 16px", background: C.bg,
-                  borderBottom: `1px solid ${C.border}`,
-                  fontFamily: "'IBM Plex Mono',monospace", fontSize: 11.5,
-                  color: C.accent, lineHeight: 1.7, overflowX: "auto",
-                }}>
-                  {result.sql.sql}
-                </div>
-              )}
-
-              {result.sql.error && (
-                <div style={{ padding: 16, color: C.red, fontSize: 12 }}>⚠ {result.sql.error}</div>
-              )}
-
-              {sqlOk ? (
-                <div style={{ overflowX: "auto", maxHeight: 420 }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                    <thead>
-                      <tr style={{ background: C.surface, position: "sticky", top: 0 }}>
-                        {result.sql.columns.map(col => (
-                          <th key={col} style={{
-                            padding: "8px 12px", textAlign: "left",
-                            color: C.muted, fontWeight: 600, fontSize: 11,
-                            borderBottom: `1px solid ${C.border}`,
-                            fontFamily: "'IBM Plex Mono',monospace",
-                            letterSpacing: "0.04em", whiteSpace: "nowrap",
-                          }}>{col}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {result.sql.rows.map((row, ri) => (
-                        <tr key={ri} style={{ borderBottom: `1px solid ${C.borderSoft}` }}
-                          onMouseEnter={e => e.currentTarget.style.background = C.hover}
-                          onMouseLeave={e => e.currentTarget.style.background = "transparent"}
-                        >
-                          {result.sql.columns.map(col => (
-                            <td key={col} style={{
-                              padding: "7px 12px", color: C.text, whiteSpace: "nowrap",
-                            }}>
-                              {typeof row[col] === "number"
-                                ? (Number.isInteger(row[col]) ? row[col].toLocaleString() : row[col].toFixed(2))
-                                : String(row[col] ?? "")}
-                            </td>
-                          ))}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : !result.sql.error && (
-                <div style={{ padding: 32, textAlign: "center", color: C.muted, fontSize: 13 }}>
-                  No matching database records found.
-                </div>
-              )}
-            </Card>
-
-            {/* Keyword Search Panel */}
-            <Card style={{ padding: 0, overflow: "hidden" }}>
-              <div style={{
-                padding: "12px 16px", borderBottom: `1px solid ${C.border}`,
-                display: "flex", alignItems: "center", gap: 8,
-                background: `${C.yellowDim || C.accentDim}`,
-              }}>
-                <BookOpen size={14} color={C.yellow || C.accent} />
-                <span style={{ fontSize: 13, fontWeight: 700, color: C.yellow || C.accent }}>RAG Search</span>
-                {kwOk && (
-                  <span style={{
-                    fontSize: 10, background: (C.yellow || C.accent) + "22",
-                    color: C.yellow || C.accent, border: `1px solid ${(C.yellow || C.accent)}40`,
-                    borderRadius: 20, padding: "2px 8px", fontWeight: 700,
-                  }}>
-                    {result.rag.blocks.length} table{result.rag.blocks.length !== 1 ? "s" : ""}
-                  </span>
-                )}
-                {result?.rag?.keywords?.length > 0 && (
-                  <span style={{ fontSize: 10, color: C.muted, marginLeft: "auto" }}>
-                    terms: {result.rag.keywords.slice(0, 4).join(", ")}
-                  </span>
-                )}
-              </div>
-
-              {result.rag?.error && (
-                <div style={{ padding: 16, color: C.red, fontSize: 12 }}>⚠ {result.rag.error}</div>
-              )}
-
-              {kwOk ? (
-                <div style={{ display: "flex", flexDirection: "column", maxHeight: 460, overflowY: "auto" }}>
-                  {result.rag.blocks.map((block, bi) => (
-                    <div key={bi}>
-                      {/* Table header */}
-                      <div style={{
-                        padding: "7px 16px",
-                        background: C.surface,
-                        borderBottom: `1px solid ${C.border}`,
-                        display: "flex", alignItems: "center", gap: 8,
-                      }}>
-                        <Database size={11} color={C.muted} />
-                        <span style={{ fontSize: 11, fontWeight: 700, fontFamily: "'IBM Plex Mono',monospace", color: C.textSoft }}>
-                          {block.table}
-                        </span>
-                        <span style={{
-                          fontSize: 9, fontWeight: 700,
-                          color: C.yellow || C.accent,
-                          background: (C.yellow || C.accent) + "15",
-                          border: `1px solid ${(C.yellow || C.accent)}30`,
-                          borderRadius: 4, padding: "1px 6px",
-                          fontFamily: "'IBM Plex Mono',monospace",
-                        }}>
-                          matches "{block.matched_keyword}"
-                        </span>
-                        <span style={{ fontSize: 10, color: C.muted, marginLeft: "auto" }}>
-                          {block.rows.length} row{block.rows.length !== 1 ? "s" : ""}
-                        </span>
-                      </div>
-                      {/* Mini table */}
-                      <div style={{ overflowX: "auto" }}>
-                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
-                          <thead>
-                            <tr style={{ background: C.bg }}>
-                              {block.columns.slice(0, 6).map(col => (
-                                <th key={col} style={{
-                                  padding: "5px 10px", textAlign: "left", color: C.muted,
-                                  fontWeight: 600, borderBottom: `1px solid ${C.border}`,
-                                  fontFamily: "'IBM Plex Mono',monospace", whiteSpace: "nowrap",
-                                }}>{col}</th>
-                              ))}
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {block.rows.slice(0, 8).map((row, ri) => (
-                              <tr key={ri} style={{ borderBottom: `1px solid ${C.borderSoft}` }}
-                                onMouseEnter={e => e.currentTarget.style.background = C.hover}
-                                onMouseLeave={e => e.currentTarget.style.background = "transparent"}
-                              >
-                                {block.columns.slice(0, 6).map(col => (
-                                  <td key={col} style={{ padding: "5px 10px", color: C.text, whiteSpace: "nowrap" }}>
-                                    {typeof row[col] === "number"
-                                      ? (Number.isInteger(row[col]) ? row[col].toLocaleString() : row[col].toFixed(2))
-                                      : String(row[col] ?? "")}
-                                  </td>
-                                ))}
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : !result.rag?.error && (
-                <div style={{ padding: 32, textAlign: "center", color: C.muted, fontSize: 13 }}>
-                  No keyword matches found in the database.
-                </div>
-              )}
-            </Card>
-
-          </div>
-        </>
-      )}
-
-      {/* Empty state */}
-      {!result && !loading && !error && (
-        <div style={{ textAlign: "center", padding: 80, color: C.muted }}>
-          <Activity size={44} style={{ margin: "0 auto 16px", display: "block", opacity: .25 }} />
-          <p style={{ fontSize: 15, fontWeight: 600 }}>Hybrid Search ready</p>
-          <p style={{ fontSize: 13, marginTop: 6 }}>Type a question above to run both an analytical query AND a keyword scan across all database tables.</p>
-        </div>
-      )}
-    </div>
-  );
-}
 
 const TABS = [
   { id: "chat", label: "AI Assistant", icon: MessageSquare },
-  { id: "hybrid", label: "Hybrid Search", icon: Activity },
   { id: "data", label: "Data Explorer", icon: Database },
   { id: "reports", label: "AI Reports", icon: FileText },
-  { id: "policy", label: "Policy Hub", icon: BookOpen },
   { id: "schema", label: "Relationship Viewer", icon: GitFork },
   { id: "settings", label: "Settings", icon: Settings },
 ];
@@ -1815,6 +1691,7 @@ function MainApp() {
   const [activeDb, setActiveDb] = useState("");
   const [apiOk, setApiOk] = useState(null);
   const [theme, setTheme] = useState("dark");
+  const [schemaVersion, setSchemaVersion] = useState(0);
   const session = getAuthSession();
   const sessionUser = session?.user || {};
 
@@ -1839,35 +1716,36 @@ function MainApp() {
 
         {/* Sidebar */}
         <div style={{
-          width: 230, flexShrink: 0, background: C.sidebarBg,
-          borderRight: `1px solid ${C.borderSoft}`, display: "flex", flexDirection: "column", position: "relative"
+          width: 240, flexShrink: 0, background: C.sidebarBg,
+          borderRight: `1px solid ${C.border}`, display: "flex", flexDirection: "column", position: "relative",
+          boxShadow: "4px 0 24px rgba(0,0,0,0.18)"
         }}>
+          {/* Top accent line */}
           <div style={{
-            position: "absolute", top: 0, left: 0, right: 0, height: 1,
-            background: `linear-gradient(90deg,transparent 10%,${C.accent}60,transparent 90%)`
+            position: "absolute", top: 0, left: 0, right: 0, height: 2,
+            background: `linear-gradient(90deg,${C.accent},${C.purple},${C.teal})`,
+            borderRadius: "0 0 2px 2px"
           }} />
 
           {/* Logo */}
-          <div style={{ padding: "22px 18px 14px" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <div style={{
-                  width: 34, height: 34, borderRadius: 10,
-                  background: `linear-gradient(135deg,${C.accent},${C.purple})`,
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  boxShadow: `0 4px 12px ${C.accentGlow}`
-                }}>
-                  <Bot size={16} color="#fff" />
-                </div>
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 800, color: C.text, letterSpacing: "-0.02em" }}>DataAnalyst</div>
-                  <div style={{ fontSize: 9, color: C.muted, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", marginTop: 1 }}>Enterprise AI</div>
-                </div>
+          <div style={{ padding: "26px 18px 16px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
+              <div style={{
+                width: 36, height: 36, borderRadius: 11,
+                background: `linear-gradient(135deg,${C.accent},${C.purple})`,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                boxShadow: `0 4px 16px ${C.accentGlow}`
+              }}>
+                <Bot size={17} color="#fff" />
+              </div>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 800, color: C.text, letterSpacing: "-0.03em" }}>DataAnalyst</div>
+                <div style={{ fontSize: 9.5, color: C.muted, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase", marginTop: 1 }}>Enterprise AI</div>
               </div>
             </div>
           </div>
 
-          <Divider style={{ margin: "0 18px 10px" }} />
+          <Divider style={{ margin: "0 16px 10px" }} />
 
           {/* Nav */}
           <nav style={{ flex: 1, padding: "4px 10px", display: "flex", flexDirection: "column", gap: 2, overflowY: "auto" }}>
@@ -1876,18 +1754,19 @@ function MainApp() {
               return (
                 <button key={tab.id} onClick={() => setActiveTab(tab.id)}
                   style={{
-                    display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 9,
-                    border: "none", background: active ? C.accentDim : "transparent",
-                    color: active ? C.accent : C.textSoft, fontSize: 13, fontWeight: active ? 600 : 500,
+                    display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 10,
+                    border: "none",
+                    background: active ? C.accentDim : "transparent",
+                    color: active ? C.accent : C.textSoft,
+                    fontSize: 13, fontWeight: active ? 700 : 500,
                     cursor: "pointer", textAlign: "left", transition: "all .15s",
-                    fontFamily: "'Plus Jakarta Sans',sans-serif",
-                    boxShadow: active ? `inset 0 0 0 1px ${C.accent}30` : "none", position: "relative"
+                    boxShadow: active ? `inset 0 0 0 1px ${C.accent}35` : "none", position: "relative"
                   }}
                   onMouseEnter={e => { if (!active) { e.currentTarget.style.background = C.hover; e.currentTarget.style.color = C.text; } }}
                   onMouseLeave={e => { if (!active) { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = C.textSoft; } }}>
                   {active && <div style={{
-                    position: "absolute", left: 0, top: "25%", bottom: "25%", width: 2,
-                    background: C.accent, borderRadius: "0 2px 2px 0"
+                    position: "absolute", left: 0, top: "20%", bottom: "20%", width: 3,
+                    background: `linear-gradient(180deg,${C.accent},${C.purple})`, borderRadius: "0 3px 3px 0"
                   }} />}
                   <Icon size={15} style={{ flexShrink: 0 }} />{tab.label}
                 </button>
@@ -1934,10 +1813,10 @@ function MainApp() {
           {/* Top bar */}
           <div style={{
             display: "flex", alignItems: "center", justifyContent: "space-between",
-            padding: "0 24px", height: 52, flexShrink: 0,
+            padding: "0 24px", height: 56, flexShrink: 0,
             background: C.surface,
-            borderBottom: `1px solid ${C.borderSoft}`,
-            boxShadow: `0 1px 0 ${C.borderSoft}`,
+            borderBottom: `1px solid ${C.border}`,
+            boxShadow: `0 1px 12px rgba(0,0,0,0.15)`,
           }}>
             {/* Left — current tab label */}
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -1965,11 +1844,9 @@ function MainApp() {
           {/* Tab panels */}
           <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column" }}>
             <div style={{ display: activeTab === "chat" ? "flex" : "none", height: "100%", flexDirection: "column" }}><ChatTab /></div>
-            <div style={{ display: activeTab === "hybrid" ? "block" : "none", height: "100%" }}><HybridSearchTab /></div>
-            <div style={{ display: activeTab === "data" ? "block" : "none", height: "100%" }}><DataExplorerTab activeDb={activeDb} /></div>
+            <div style={{ display: activeTab === "data" ? "block" : "none", height: "100%" }}><DataExplorerTab activeDb={activeDb} schemaVersion={schemaVersion} /></div>
             <div style={{ display: activeTab === "reports" ? "block" : "none", height: "100%" }}><ReportsTab /></div>
-            <div style={{ display: activeTab === "policy" ? "block" : "none", height: "100%" }}><PolicyTab /></div>
-            <div style={{ display: activeTab === "schema" ? "block" : "none", height: "100%" }}><SchemaMapperTab /></div>
+            <div style={{ display: activeTab === "schema" ? "block" : "none", height: "100%" }}><SchemaMapperTab onRefresh={() => setSchemaVersion(v => v + 1)} /></div>
             <div style={{ display: activeTab === "settings" ? "block" : "none", height: "100%" }}><SettingsTab activeDb={activeDb} setActiveDb={setActiveDb} /></div>
           </div>
         </div>
