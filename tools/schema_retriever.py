@@ -13,17 +13,20 @@ import psycopg2
 import google.genai as genai
 import config
 from tools.sql_tool import get_engine
+import time
 
 # Initialize the new google.genai client (replaces deprecated google.generativeai)
 _genai_client = genai.Client(api_key=config.GOOGLE_API_KEY)
 
 def _embed_query(text: str) -> list[float]:
     """Embed a query string using gemini-embedding-001 with MRL at configured dims."""
+    t0 = time.perf_counter()
     result = _genai_client.models.embed_content(
         model=config.EMBEDDING_MODEL,
         contents=text,
         config={"output_dimensionality": config.EMBEDDING_DIMENSIONS},
     )
+    print(f"⏱️ [PERF] schema_retriever._embed_query: {time.perf_counter()-t0:.3f}s")
     return result.embeddings[0].values
 
 def retrieve_resolved_tables(query: str) -> list[str]:
@@ -49,12 +52,15 @@ def retrieve_resolved_tables(query: str) -> list[str]:
         query_vec = _embed_query(query)
         
         # Connect to Supabase
+        t_conn = time.perf_counter()
         conn = psycopg2.connect(**config.NEW_SUPABASE_DB_PARAMS)
         cur = conn.cursor()
+        print(f"⏱️ [PERF] schema_retriever.db_connect: {time.perf_counter()-t_conn:.3f}s")
         
         # 3. Retrieve ALL business tables with similarity scores
         # Exclude internal/system tables that should never appear in business queries
         EXCLUDED_TABLES = ('langchain_pg_collection', 'langchain_pg_embedding', 'sample', 'table_embeddings')
+        t_vsearch = time.perf_counter()
         cur.execute("""
             SELECT table_name, 1 - (embedding <=> %s::vector) AS similarity
             FROM table_embeddings
@@ -63,6 +69,7 @@ def retrieve_resolved_tables(query: str) -> list[str]:
         """, (str(query_vec), EXCLUDED_TABLES))
         
         rows = cur.fetchall()
+        print(f"⏱️ [PERF] schema_retriever.vector_search: {time.perf_counter()-t_vsearch:.3f}s ({len(rows)} candidates)")
         if not rows:
             cur.close()
             conn.close()
@@ -147,6 +154,7 @@ def get_resolved_schema_context(query: str) -> str:
     """
     Returns a core schema block text of the resolved tables.
     """
+    t_ctx = time.perf_counter()
     if not query:
         # If no query is provided (e.g. startup/inspect), return all tables or first 10
         try:
@@ -198,4 +206,5 @@ def get_resolved_schema_context(query: str) -> str:
         except Exception:
             pass
             
+    print(f"⏱️ [PERF] get_resolved_schema_context: {time.perf_counter()-t_ctx:.3f}s ({len(tables)} tables)")
     return "\n".join(lines)

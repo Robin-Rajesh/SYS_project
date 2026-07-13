@@ -10,6 +10,7 @@ LangChain Tool that:
 
 import re
 import difflib
+import time
 import sqlglot
 import sqlglot.expressions as exp
 import json
@@ -438,6 +439,7 @@ def sql_query_tool(query: str) -> str:
     Input must be a valid SQL SELECT statement.
     """
 
+    t_tool_start = time.perf_counter()
     # --- Guardrail: block non-SELECT statements ---
     if not _is_read_only(query):
         return "BLOCKED: Only SELECT statements are permitted."
@@ -469,13 +471,17 @@ def sql_query_tool(query: str) -> str:
                                 pass
 
                 # --- DETERMINISTIC VALIDATOR: fix hallucinated columns before hitting DB ---
+                t_val = time.perf_counter()
                 validated_sql, auto_corrections = _validate_and_fix_sql(current_sql)
+                print(f"⏱️ [PERF] sql_tool.validation (attempt {attempt}): {time.perf_counter()-t_val:.3f}s")
                 if auto_corrections:
                     for msg in auto_corrections:
                         print(msg)
                     current_sql = validated_sql
 
+                t_exec = time.perf_counter()
                 df = pd.read_sql(text(current_sql), conn)
+                print(f"⏱️ [PERF] sql_tool.db_query (attempt {attempt}): {time.perf_counter()-t_exec:.3f}s → {len(df)} rows")
 
             global last_query_dataframe, last_executed_sqls
             last_query_dataframe = df  # Store for api.py to inject as ground truth
@@ -499,6 +505,7 @@ def sql_query_tool(query: str) -> str:
             if len(df) > 50:
                 overflow_note = f"\n(Showing 50 of {len(df):,} rows)"
 
+            print(f"⏱️ [PERF] sql_tool.total (attempt {attempt}): {time.perf_counter()-t_tool_start:.3f}s")
             return (
                 f"Query executed successfully. Rows returned: {len(df)}\n"
                 f"Executed SQL: ```sql\n{current_sql}\n```\n\n"
@@ -517,7 +524,9 @@ def sql_query_tool(query: str) -> str:
             if attempt < config.MAX_RETRIES:
                 print(f"[SELF-HEAL] Attempt {attempt} for query: {query[:100]}...")
                 # Ask Gemini to fix the query and retry
+                t_fix = time.perf_counter()
                 current_sql = _ask_gemini_to_fix(query, current_sql, last_error)
+                print(f"⏱️ [PERF] sql_tool.self_heal_llm (attempt {attempt}): {time.perf_counter()-t_fix:.3f}s")
                 # Safety check: make sure the corrected query is still read-only
                 if not _is_read_only(current_sql):
                     return "BLOCKED: Only SELECT statements are permitted."

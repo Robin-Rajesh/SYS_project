@@ -16,6 +16,7 @@ from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 import json
 from datetime import date
 from typing import Optional
+import time
 
 import config
 from tools.sql_tool import sql_query_tool, inspect_table_columns
@@ -130,10 +131,18 @@ def get_system_prompt(user_query: Optional[str] = None) -> str:
     """
     from tools.sql_tool import get_db_index
     from tools.schema_retriever import get_resolved_schema_context
+    t_prompt_start = time.perf_counter()
 
+    t0 = time.perf_counter()
     live_schema = get_resolved_schema_context(user_query) # schema of whichever DB is currently connected
+    t_schema = time.perf_counter() - t0
+
+    t0 = time.perf_counter()
     db_index = get_db_index()           # Index of ALL tables
+    t_index = time.perf_counter() - t0
+
     quarter_block = _resolve_financial_quarters()
+    print(f"⏱️ [PERF] get_system_prompt → schema_retrieval: {t_schema:.3f}s | db_index: {t_index:.3f}s")
 
     # Load Star Schema relationships
     global _relationships_cache
@@ -180,6 +189,7 @@ def get_system_prompt(user_query: Optional[str] = None) -> str:
         ]
         relationships_str = "\n".join(rel_lines)
 
+    print(f"⏱️ [PERF] get_system_prompt (total): {time.perf_counter()-t_prompt_start:.3f}s")
     return f"""\
 You are an expert Data Analyst AI assistant with access to these tools:
 
@@ -497,9 +507,13 @@ def run_agent(user_input: str) -> str:
         # Compute the system prompt ONCE here — includes the expensive
         # embedding API call + Supabase vector search + schema introspection.
         # _state_modifier reuses this cached value for every ReAct step.
+        t_run_total = time.perf_counter()
         _current_system_prompt = get_system_prompt(user_input)
+        t_prompt_elapsed = time.perf_counter() - t_run_total
 
+        t_invoke = time.perf_counter()
         result = agent.invoke({"messages": _chat_history}, config=_AGENT_CONFIG)
+        print(f"\n⏱️ [PERF] run_agent → prompt: {t_prompt_elapsed:.3f}s | invoke: {time.perf_counter()-t_invoke:.3f}s | total: {time.perf_counter()-t_run_total:.3f}s")
 
         response_messages = result.get("messages", [])
         ai_response = ""
@@ -559,12 +573,15 @@ def stream_agent(user_input: str):
         # Compute the system prompt ONCE here — includes the expensive
         # embedding API call + Supabase vector search + schema introspection.
         # _state_modifier reuses this cached value for every ReAct step.
+        t_stream_total = time.perf_counter()
         _current_system_prompt = get_system_prompt(user_input)
+        print(f"⏱️ [PERF] stream_agent → prompt_build: {time.perf_counter()-t_stream_total:.3f}s")
 
         # Snapshot clean history as the input to the agent.
         input_messages = list(_chat_history)
 
         final_response = ""
+        t_llm_stream = time.perf_counter()
         for step in agent.stream({"messages": input_messages}, config=_AGENT_CONFIG):
             yield step
             if "agent" in step:
@@ -574,6 +591,7 @@ def stream_agent(user_input: str):
                         if text and text != "None":
                             final_response = text
 
+        print(f"⏱️ [PERF] stream_agent → llm_stream: {time.perf_counter()-t_llm_stream:.3f}s | overall: {time.perf_counter()-t_stream_total:.3f}s")
         # Stream finished cleanly — persist ONLY the final answer paired
         # with the user question. Everything else (ToolMessages, intermediate
         # AIMessage(tool_calls)) is intentionally discarded.

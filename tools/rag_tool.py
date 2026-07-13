@@ -10,6 +10,7 @@ LangChain Tool that:
 """
 
 import os
+import time
 from langchain_core.tools import tool
 from langchain_community.document_loaders import TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -129,7 +130,9 @@ def _retrieve(query: str, k: int = 4) -> str:
         _vector_store = _build_and_get_vector_store()
 
     try:
+        t_rag = time.perf_counter()
         results = _vector_store.similarity_search(query, k=k)
+        print(f"⏱️ [PERF] rag_tool.similarity_search: {time.perf_counter()-t_rag:.3f}s ({len(results)} chunks)")
     except Exception as e:
         print(f"[RAG] Retrieval failed: {e}")
         return "DATA UNAVAILABLE: Policy retrieval failed (ensure pgvector is configured)."

@@ -10,6 +10,7 @@ All existing agent.py / tools stay UNTOUCHED.
 
 import os
 import json
+import time
 import importlib.util
 import subprocess
 import smtplib
@@ -255,6 +256,10 @@ Return only the JSON array."""
 async def chat_stream(req: ChatRequest):
     async def generate() -> AsyncGenerator[str, None]:
         import tools.sql_tool as _sql_mod
+        t_request_start = time.perf_counter()
+        print(f"\n{'='*60}")
+        print(f"⏱️ PERF: New Chat Request: '{req.message[:80]}'")
+        print(f"{'='*60}")
 
         final_response = ""
         plotly_json = None
@@ -368,6 +373,8 @@ async def chat_stream(req: ChatRequest):
             elif "error" in step:
                 yield f"data: {json.dumps({'type': 'error', 'content': step['error']})}\n\n"
 
+        t_postprocess = time.perf_counter()
+        print(f"⏱️ [PERF] api.agent_streaming: {t_postprocess-t_request_start:.3f}s")
         # ── Stream finished — begin post-processing ──────────────────────────
 
         # Fallback: if the agent emitted no final text, surface the last tool result.
@@ -484,6 +491,9 @@ async def chat_stream(req: ChatRequest):
         # Log summary to terminal for debugging
         print(f"\n📋 [AGENT SUMMARY] {len(actual_sqls)} SQL query/queries executed for: '{req.message[:80]}'")
 
+        print(f"⏱️ [PERF] api.post_processing: {time.perf_counter()-t_postprocess:.3f}s")
+        print(f"⏱️ [PERF] api.total_request: {time.perf_counter()-t_request_start:.3f}s")
+        print(f"{'='*60}\n")
         response_event = {"type": "response", "content": final_response}
         if plotly_json:
             response_event["plotly_json"] = plotly_json
